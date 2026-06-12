@@ -1,0 +1,12 @@
+pub mod adapters;
+pub mod bridge;
+pub mod cli;
+pub mod config;
+pub mod index;
+pub mod launcher;
+pub mod model;
+pub mod query;
+pub mod search;
+pub mod stats;
+pub mod store;
+pub mod tui;
