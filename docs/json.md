@@ -183,8 +183,11 @@ With `--json`, `fork` never starts an agent. It prints:
 | `warnings` | Notes from the translation, for example that the new session could not be added to Codex's own session list. |
 
 A translated fork holds the conversation as it was: no notice is added and
-tool calls keep their names. The one addition is `[hopback]` in front of the
-title the target agent shows for the session.
+tool calls keep their names. The instructions an agent gives itself, such as
+Codex's developer messages, are not part of the conversation and are left
+out. The one addition is `[hopback]` in front of the session's title in the
+target agent. Claude Code keeps that title; Codex replaces it with its own
+once it has opened the session.
 
 Translated forks exist between Claude Code and Codex. Any other pair, an
 unknown selector, or an agent without a native fork is an error.

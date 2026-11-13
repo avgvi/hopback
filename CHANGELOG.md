@@ -113,7 +113,16 @@ The relaunch of aiz as hopback.
   agent shows.
 - A fork into Codex is listed with the sandbox and approval settings of your
   latest Codex session in that folder (or anywhere, when the folder has
-  none) instead of being forced to read-only.
+  none) instead of being forced to read-only. It is recorded for the model
+  provider Codex is configured with, where it used to say `openai`, which
+  made Codex refuse to open it on any other provider.
+- A fork into Codex shows the earlier replies in Codex's transcript, not
+  only the prompts.
+- A fork into Claude Code leaves out the instructions Codex gave itself,
+  which used to appear as prompts you had typed.
+- A Codex session counts as started with skipped permissions only when it
+  ran with approvals off and no sandbox. Runs with approvals off inside a
+  sandbox, which is what `codex exec` does, resume normally.
 - The agent skill and `llms.txt` no longer tell agents to ask for approval
   before resuming, forking, pinning or renaming.
 - The actions menu lists each action with the key that runs it directly, in

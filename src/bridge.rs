@@ -460,7 +460,9 @@ fn inject_codex(
         .join(mm)
         .join(dd)
         .join(format!("rollout-{file_ts}-{session_id}.jsonl"));
-    let lines = build_codex_jsonl(ctx, &session_id, &cwd, &now);
+    let home = codex_home(options);
+    let provider = codex_model_provider(&home);
+    let lines = build_codex_jsonl(ctx, &session_id, &cwd, &now, &provider);
 
     if !options.dry_run {
         if let Some(parent) = target_path.parent() {
@@ -471,11 +473,13 @@ fn inject_codex(
 
     let registration = if options.register_codex_index && !options.dry_run {
         Some(register_codex_thread(
-            &codex_home(options).join("state_5.sqlite"),
+            &home.join("state_5.sqlite"),
             &session_id,
             &target_path,
             &cwd,
             ctx,
+            &provider,
+            codex_config_value(&home, "model").as_deref(),
         ))
     } else {
         None
@@ -516,6 +520,11 @@ fn build_claude_jsonl(
     let mut parent: Option<String> = None;
 
     for msg in &ctx.messages {
+        // The instructions the source agent gave itself (Codex's developer
+        // messages) are not part of the conversation.
+        if msg.role == NormalizedRole::System {
+            continue;
+        }
         let uuid = uuid_v4();
         let typ = if msg.role == NormalizedRole::Assistant {
             "assistant"
@@ -575,6 +584,7 @@ fn build_codex_jsonl(
     session_id: &str,
     cwd: &str,
     now: &str,
+    provider: &str,
 ) -> Vec<String> {
     let mut out = Vec::new();
     out.push(
@@ -587,8 +597,11 @@ fn build_codex_jsonl(
                 "cwd": cwd,
                 "originator": "hopback",
                 "cli_version": "hopback-import",
-                "source": "hopback-import",
-                "model_provider": "openai"
+                // The source and thread source of an interactive session, so
+                // Codex lists the fork in its own picker.
+                "source": "cli",
+                "thread_source": "user",
+                "model_provider": provider
             }
         })
         .to_string(),
@@ -617,20 +630,30 @@ fn build_codex_jsonl(
                 .to_string(),
             );
         }
-        if msg.role == NormalizedRole::User {
-            let text = text_of_message(msg);
-            if !text.is_empty() {
+        // Codex draws its transcript from these events, so each prompt and
+        // each reply gets one, or the fork would open looking empty.
+        let text = text_of_message(msg);
+        if !text.is_empty() {
+            let payload = match msg.role {
+                NormalizedRole::User => Some(json!({
+                    "type": "user_message",
+                    "message": text,
+                    "images": [],
+                    "local_images": [],
+                    "text_elements": []
+                })),
+                NormalizedRole::Assistant => Some(json!({
+                    "type": "agent_message",
+                    "message": text
+                })),
+                _ => None,
+            };
+            if let Some(payload) = payload {
                 out.push(
                     json!({
                         "timestamp": msg.timestamp.as_deref().unwrap_or(now),
                         "type": "event_msg",
-                        "payload": {
-                            "type": "user_message",
-                            "message": text,
-                            "images": [],
-                            "local_images": [],
-                            "text_elements": []
-                        }
+                        "payload": payload
                     })
                     .to_string(),
                 );
@@ -948,13 +971,60 @@ fn generated_session(
     }
 }
 
+/// A top-level string setting in Codex's `config.toml`, such as
+/// `model_provider`. Top-level keys come before the first table.
+fn codex_config_value(codex_home: &Path, key: &str) -> Option<String> {
+    let text = fs::read_to_string(codex_home.join("config.toml")).ok()?;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        if name.trim() != key {
+            continue;
+        }
+        let value = value.split('#').next().unwrap_or("").trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        return (!value.is_empty()).then(|| value.to_string());
+    }
+    None
+}
+
+/// The model provider Codex is set up with. Codex refuses to resume a session
+/// recorded for another provider, so a fork has to carry the current one: the
+/// one in `config.toml`, else the one of the user's latest session, else
+/// Codex's default.
+fn codex_model_provider(codex_home: &Path) -> String {
+    codex_config_value(codex_home, "model_provider")
+        .or_else(|| {
+            let conn = Connection::open_with_flags(
+                codex_home.join("state_5.sqlite"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .ok()?;
+            conn.query_row(
+                "SELECT model_provider FROM threads
+                 WHERE source NOT LIKE '{%' AND COALESCE(cli_version, '') != 'hopback-import'
+                 ORDER BY updated_at DESC LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| "openai".to_string())
+}
+
 /// The sandbox policy and approval mode Codex recorded for the user's latest
 /// session in `cwd`, or in any folder when that one has none, so a fork is
 /// listed with the settings already in use. Subagent threads and earlier
 /// forks are left out. With no thread to copy from, Codex's most restrictive
 /// values are written, because the columns cannot be empty.
 fn codex_settings_in_use(conn: &Connection, cwd: &str) -> (String, String) {
-    const FROM_USER: &str = "source NOT LIKE '{%' AND source != 'hopback-import'";
+    const FROM_USER: &str =
+        "source NOT LIKE '{%' AND COALESCE(cli_version, '') != 'hopback-import'";
     let row = |sql: &str, args: &[&dyn rusqlite::ToSql]| {
         conn.query_row(sql, args, |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -991,6 +1061,8 @@ fn register_codex_thread(
     rollout_path: &Path,
     cwd: &str,
     ctx: &NormalizedContext,
+    provider: &str,
+    model: Option<&str>,
 ) -> CodexRegistration {
     let result = (|| -> Result<()> {
         if !db_path.exists() {
@@ -1049,8 +1121,8 @@ fn register_codex_thread(
                 rollout_path.to_string_lossy(),
                 now,
                 now,
-                "hopback-import",
-                "openai",
+                "cli",
+                provider,
                 cwd,
                 title,
                 sandbox_policy,
@@ -1061,7 +1133,7 @@ fn register_codex_thread(
                 "hopback-import",
                 first_user,
                 "enabled",
-                ctx.source.model.as_deref(),
+                model,
                 now_ms,
                 now_ms,
             ],
@@ -1449,6 +1521,8 @@ mod tests {
             Path::new("/tmp/rollout.jsonl"),
             "/work",
             &ctx,
+            "some-provider",
+            Some("some-model"),
         );
         assert!(reg.ok, "{reg:?}");
         let conn = Connection::open(&db).unwrap();
@@ -1458,6 +1532,40 @@ mod tests {
             })
             .unwrap();
         assert_eq!(title, "[hopback] hello");
+        let provider: (String, Option<String>) = conn
+            .query_row(
+                "SELECT model_provider, model FROM threads WHERE id = 'new-id'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            provider,
+            ("some-provider".into(), Some("some-model".into()))
+        );
+
+        // The provider and model come from Codex's own configuration.
+        fs::write(
+            dir.path().join("config.toml"),
+            "model = \"m-1\"\nmodel_provider = \"bedrock\" # mine\n\n[tools]\nmodel_provider = \"ignored\"\n",
+        )
+        .unwrap();
+        assert_eq!(codex_model_provider(dir.path()), "bedrock");
+        assert_eq!(
+            codex_config_value(dir.path(), "model").as_deref(),
+            Some("m-1")
+        );
+        let lines = build_codex_jsonl(&ctx, "sid", "/work", "2026-01-01T00:00:00Z", "bedrock");
+        let meta: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(meta["payload"]["model_provider"], "bedrock");
+        // Without a setting, the provider of the latest session is used.
+        fs::remove_file(dir.path().join("config.toml")).unwrap();
+        conn.execute(
+            "UPDATE threads SET model_provider = 'from-db' WHERE id = 'elsewhere'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(codex_model_provider(dir.path()), "from-db");
         // The fork is listed with the settings of the latest session in its folder.
         let settings = |id: &str| -> (String, String) {
             conn.query_row(
@@ -1472,7 +1580,15 @@ mod tests {
             (r#"{"type":"here"}"#.into(), "never".into())
         );
         // In a folder Codex has not seen, the latest session anywhere is used.
-        let reg = register_codex_thread(&db, "new-2", Path::new("/tmp/r2.jsonl"), "/new", &ctx);
+        let reg = register_codex_thread(
+            &db,
+            "new-2",
+            Path::new("/tmp/r2.jsonl"),
+            "/new",
+            &ctx,
+            "some-provider",
+            None,
+        );
         assert!(reg.ok, "{reg:?}");
         assert_eq!(
             settings("new-2"),
@@ -1481,7 +1597,16 @@ mod tests {
 
         // A Claude Code fork starts with the first message, with no notice in
         // front of it, and carries the marked title in a rename record.
-        let lines = build_claude_jsonl(&ctx, "sid", "/work", "2026-01-01T00:00:00Z");
+        let mut with_system = ctx.clone();
+        with_system.messages.insert(
+            0,
+            NormalizedMessage {
+                role: NormalizedRole::System,
+                content: vec![ContentBlock::Text("<skills_instructions>".into())],
+                timestamp: None,
+            },
+        );
+        let lines = build_claude_jsonl(&with_system, "sid", "/work", "2026-01-01T00:00:00Z");
         let first: Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(first["parentUuid"], Value::Null);
         assert_eq!(first["message"]["content"], "hello");
@@ -1496,6 +1621,8 @@ mod tests {
             Path::new("x"),
             "/work",
             &ctx,
+            "openai",
+            None,
         );
         assert!(!missing.ok);
         assert!(missing.error.unwrap().contains("not found"));
