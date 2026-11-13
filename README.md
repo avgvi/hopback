@@ -216,7 +216,7 @@ cd hopback
 cargo install --path .       # installs hopback and hb into ~/.cargo/bin
 ```
 
-[AGENTS.md](AGENTS.md) describes the code layout and the checks to run. [docs/packaging.md](docs/packaging.md) covers how releases are built, and [CHANGELOG.md](CHANGELOG.md) what changed.
+[AGENTS.md](AGENTS.md) describes the code layout and the checks to run, and [CHANGELOG.md](CHANGELOG.md) what changed.
 
 ## License
 

@@ -26,7 +26,7 @@ The relaunch of aiz as hopback.
   macOS and Linux on arm64 and x86_64 with checksums, a shell installer, a
   Homebrew formula for `avgvi/homebrew-tap`, an npm installer and the release
   workflow), a `pyproject.toml` for maturin wheels, and a Nix flake. Every
-  channel installs both `hopback` and `hb`. See `docs/packaging.md`.
+  channel installs both `hopback` and `hb`.
 - `--agent-context` prints a bundled Agent Skill (`skills/hopback/SKILL.md`)
   that tells a coding agent how to search, page, resume and fork with `hb`.
 - `hopback completions bash|zsh|fish` (also elvish and powershell) and
