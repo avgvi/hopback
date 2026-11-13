@@ -149,6 +149,24 @@ pub fn join_content(messages: &[String]) -> String {
     messages.join("\n\n")
 }
 
+/// The messages in an indexed `content` string, oldest first, each with
+/// whether the user wrote it. A paragraph with neither prefix continues the
+/// message before it.
+pub fn split_content(content: &str) -> Vec<(bool, String)> {
+    let mut out: Vec<(bool, String)> = Vec::new();
+    for block in content.split("\n\n") {
+        if let Some(text) = block.strip_prefix(USER_PREFIX) {
+            out.push((true, text.to_string()));
+        } else if let Some(text) = block.strip_prefix(ASSISTANT_PREFIX) {
+            out.push((false, text.to_string()));
+        } else if let Some((_, last)) = out.last_mut() {
+            last.push_str("\n\n");
+            last.push_str(block);
+        }
+    }
+    out
+}
+
 pub fn truncate_title(text: &str, max_len: usize, word_break: bool) -> String {
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let text = collapsed.as_str();

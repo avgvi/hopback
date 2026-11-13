@@ -1,0 +1,100 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH hopback 1  "hopback 0.2.0" 
+.SH NAME
+hopback \- Find, resume and fork coding\-agent sessions across Claude Code, Codex and more
+.SH SYNOPSIS
+\fBhopback\fR [\fB\-a\fR|\fB\-\-agent\fR] [\fB\-d\fR|\fB\-\-directory\fR] [\fB\-\-no\-tui\fR] [\fB\-\-list\fR] [\fB\-\-json\fR] [\fB\-\-limit\fR] [\fB\-\-offset\fR] [\fB\-\-all\fR] [\fB\-\-no\-refresh\fR] [\fB\-\-include\-hidden\fR] [\fB\-\-include\-messages\fR] [\fB\-\-rebuild\fR] [\fB\-\-stats\fR] [\fB\-\-agent\-context\fR] [\fB\-\-print\fR] [\fB\-\-yolo\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIQUERY\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+Find, resume and fork coding\-agent sessions across Claude Code, Codex and more
+.SH OPTIONS
+.TP
+\fB\-a\fR, \fB\-\-agent\fR \fI<AGENT>\fR
+Filter by agent id
+.TP
+\fB\-d\fR, \fB\-\-directory\fR \fI<DIRECTORY>\fR
+Filter by working directory substring
+.TP
+\fB\-\-no\-tui\fR
+List matching sessions instead of opening the TUI
+.TP
+\fB\-\-list\fR
+List sessions and exit
+.TP
+\fB\-\-json\fR
+Print matching sessions as one JSON object and exit
+.TP
+\fB\-\-limit\fR \fI<N>\fR
+Maximum sessions to return (default: 50 for \-\-json, 200 for \-\-list)
+.TP
+\fB\-\-offset\fR \fI<N>\fR
+Skip this many matches
+.TP
+\fB\-\-all\fR
+Return every match from the requested offset
+.TP
+\fB\-\-no\-refresh\fR
+Serve the existing index without scanning agent files
+.TP
+\fB\-\-include\-hidden\fR
+Include sessions hidden in hopback in \-\-json and \-\-list output
+.TP
+\fB\-\-include\-messages\fR
+Include the conversation text of each session in \-\-json output
+.TP
+\fB\-\-rebuild\fR
+Drop and reconstruct the index from agent files
+.TP
+\fB\-\-stats\fR
+Show the statistics dashboard and exit
+.TP
+\fB\-\-agent\-context\fR
+Print instructions for coding agents that want to use hopback, and exit
+.TP
+\fB\-\-print\fR
+Print the folder and the resume command instead of running it
+.TP
+\fB\-\-yolo\fR
+Launch with the agent\*(Aqs skip\-permission flags where supported
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+[\fIQUERY\fR] [default: ]
+Search text plus keyword filters, or `.` to resume the newest session of the current folder
+.SH SUBCOMMANDS
+.TP
+hopback\-fork(1)
+Fork an existing session into a fresh one
+.TP
+hopback\-pin(1)
+Pin a session to the top of the list
+.TP
+hopback\-unpin(1)
+Remove a session\*(Aqs pin
+.TP
+hopback\-rename(1)
+Give a session a title inside hopback
+.TP
+hopback\-hide(1)
+Hide a session from hopback
+.TP
+hopback\-unhide(1)
+Show a hidden session again
+.TP
+hopback\-completions(1)
+Print a shell completion script
+.TP
+hopback\-man(1)
+Print the man page in roff format
+.TP
+hopback\-config(1)
+Manage hopback configuration
+.TP
+hopback\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.2.0

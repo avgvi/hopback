@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use aiz::adapters::{mtime_nanos, Adapter};
-use aiz::config::AgentId;
-use aiz::index;
-use aiz::model::{Session, SessionKey};
-use aiz::store::Store;
+use hopback::adapters::{mtime_nanos, Adapter};
+use hopback::config::AgentId;
+use hopback::index;
+use hopback::model::{Session, SessionKey};
+use hopback::store::Store;
 
 fn write(path: &Path, contents: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -83,7 +83,7 @@ impl Adapter for CountingAdapter {
         self.parse_calls.fetch_add(1, Ordering::SeqCst);
         let id = path.file_stem().unwrap().to_string_lossy().to_string();
         let bytes = std::fs::read(path)?;
-        Ok(aiz::adapters::claude::parse_jsonl(
+        Ok(hopback::adapters::claude::parse_jsonl(
             &bytes,
             &id,
             mtime_nanos(path).unwrap_or(0),

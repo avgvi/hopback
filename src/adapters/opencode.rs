@@ -1,8 +1,14 @@
-use std::collections::HashMap;
+//! OpenCode keeps every session in one SQLite database. Two table sets exist:
+//! OpenCode 1.x wrote `session`, `message` and `part`; OpenCode 2.x writes
+//! `session_v2` and `session_message`, with the text of a turn stored inline
+//! in the message row. This adapter reads whichever the database has.
+
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 
 use super::{mtime_nanos, Adapter, IncrementalResult, KnownSessions};
@@ -12,6 +18,9 @@ use crate::model::{
 };
 
 const TITLE_MAX: usize = 100;
+
+/// OpenCode 2 tracks its import of a 1.x database under this `kv` key.
+const V1_MIGRATION_STATE_KEY: &str = "migration.v1-v2";
 
 pub struct OpenCodeAdapter {
     db_path: PathBuf,
@@ -48,135 +57,409 @@ fn ms_to_secs(ms: i64) -> i64 {
     ms / 1000
 }
 
+/// When the database last changed: the newer of the database file and its
+/// `-wal` file. OpenCode runs SQLite in WAL mode, so a new message can sit in
+/// the WAL for a while before a checkpoint touches the main file.
+fn db_change_mtime(db_path: &Path) -> Result<i64> {
+    let db = mtime_nanos(db_path)?;
+    let mut wal = OsString::from(db_path.as_os_str());
+    wal.push("-wal");
+    let wal = mtime_nanos(Path::new(&wal)).unwrap_or(0);
+    Ok(db.max(wal))
+}
+
 pub fn load_db_sessions(db_path: &Path, db_mtime: i64) -> Vec<Session> {
-    let conn = match Connection::open_with_flags(
+    read_db_sessions(db_path, db_mtime).unwrap_or_default()
+}
+
+/// `None` means the database could not be read at all, which is different
+/// from a readable database that holds no sessions.
+fn read_db_sessions(db_path: &Path, db_mtime: i64) -> Option<Vec<Session>> {
+    // Read-only, and not `immutable`: OpenCode may be writing, and an
+    // immutable connection would ignore what is still in the WAL.
+    let conn = Connection::open_with_flags(
         db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let mut sessions = load_from_conn(&conn, db_mtime);
+    )
+    .ok()?;
+    let mut sessions = read_from_conn(&conn, db_mtime)?;
     for session in &mut sessions {
         session.source_path = Some(db_path.to_string_lossy().to_string());
     }
-    sessions
+    Some(sessions)
 }
 
+#[cfg(test)]
 fn load_from_conn(conn: &Connection, db_mtime: i64) -> Vec<Session> {
-    let mut sessions = Vec::new();
+    read_from_conn(conn, db_mtime).unwrap_or_default()
+}
 
-    let mut stmt = match conn
-        .prepare("SELECT id, directory, title, time_created, time_updated FROM session")
-    {
-        Ok(s) => s,
-        Err(_) => return sessions,
+fn read_from_conn(conn: &Connection, db_mtime: i64) -> Option<Vec<Session>> {
+    let layout = DbLayout::detect(conn)?;
+    let mut sessions = Vec::new();
+    for &source in layout.sources() {
+        let rows = session_rows(conn, &layout, source)?;
+        if rows.is_empty() {
+            continue;
+        }
+        // Each source renders with its own messages: a session OpenCode 2
+        // copied keeps its 1.x message ids, so the two cannot share one map.
+        let mut conversations = match source {
+            DbSchema::V1 => load_v1_conversations(conn),
+            DbSchema::V2 => load_v2_conversations(conn),
+        };
+        for row in rows {
+            let messages = conversations.remove(&row.id).unwrap_or_default();
+            if let Some(session) = build_session(row, &messages, db_mtime) {
+                sessions.push(session);
+            }
+        }
+    }
+    Some(sessions)
+}
+
+/// Table set that holds one OpenCode session and its conversation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DbSchema {
+    /// OpenCode 1.x: `session`, `message` and `part`.
+    V1,
+    /// OpenCode 2.x: `session_v2` plus one `session_message` row per turn.
+    V2,
+}
+
+impl DbSchema {
+    fn session_table(self) -> &'static str {
+        match self {
+            DbSchema::V1 => "session",
+            DbSchema::V2 => "session_v2",
+        }
+    }
+}
+
+/// Where an OpenCode database currently keeps its sessions.
+///
+/// A fresh OpenCode 2 database only has `session_v2`. When OpenCode 2 opens a
+/// 1.x database it adds `session_v2` and copies the 1.x sessions in the
+/// background, newest id first, saving its progress in
+/// `kv['migration.v1-v2']`. It leaves the 1.x tables behind afterwards.
+#[derive(Debug, PartialEq, Eq)]
+enum DbLayout {
+    V1,
+    V2,
+    /// OpenCode 2 has not finished copying 1.x sessions. Sessions with an id
+    /// at or above `cursor` are already in `session_v2`; older ones still live
+    /// only in the 1.x tables. No cursor means nothing was copied yet.
+    Migrating {
+        cursor: Option<String>,
+    },
+}
+
+impl DbLayout {
+    /// `None` when there is no session table or SQLite cannot tell.
+    fn detect(conn: &Connection) -> Option<DbLayout> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'table' AND name IN ('session', 'session_v2', 'kv')",
+            )
+            .ok()?;
+        let tables = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .ok()?
+            .collect::<rusqlite::Result<HashSet<String>>>()
+            .ok()?;
+        match (tables.contains("session_v2"), tables.contains("session")) {
+            (false, false) => None,
+            (false, true) => Some(DbLayout::V1),
+            (true, false) => Some(DbLayout::V2),
+            (true, true) if !tables.contains("kv") => Some(DbLayout::Migrating { cursor: None }),
+            (true, true) => DbLayout::detect_migration(conn),
+        }
+    }
+
+    /// Reads the migration state the way OpenCode does: a missing or unknown
+    /// value means the copy has not started.
+    fn detect_migration(conn: &Connection) -> Option<DbLayout> {
+        let state = conn
+            .query_row(
+                "SELECT value FROM kv WHERE key = ?1",
+                [V1_MIGRATION_STATE_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()?
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok());
+        let field = |key: &str| {
+            state
+                .as_ref()
+                .and_then(|state| state.get(key))
+                .and_then(Value::as_str)
+                .map(String::from)
+        };
+        Some(match field("phase").as_deref() {
+            // After the copy OpenCode deletes sessions only from `session_v2`,
+            // so reading the 1.x leftovers would bring deleted sessions back.
+            Some("completed") => DbLayout::V2,
+            Some("sessions") => DbLayout::Migrating {
+                cursor: field("cursor"),
+            },
+            _ => DbLayout::Migrating { cursor: None },
+        })
+    }
+
+    fn sources(&self) -> &'static [DbSchema] {
+        match self {
+            DbLayout::V1 => &[DbSchema::V1],
+            DbLayout::V2 => &[DbSchema::V2],
+            DbLayout::Migrating { .. } => &[DbSchema::V2, DbSchema::V1],
+        }
+    }
+}
+
+struct SessionRow {
+    id: String,
+    directory: String,
+    title: String,
+    time_created: i64,
+    time_updated: i64,
+}
+
+/// Reads the sessions of one source. Subagent child sessions (`parent_id` set)
+/// are left out, as in OpenCode's own session list; forks are top-level
+/// sessions and stay. `None` means the table could not be queried.
+fn session_rows(conn: &Connection, layout: &DbLayout, source: DbSchema) -> Option<Vec<SessionRow>> {
+    let table = source.session_table();
+    let mut filters: Vec<&str> = Vec::new();
+    let mut params: Vec<Option<String>> = Vec::new();
+    // Early 1.x databases have no `parent_id` column.
+    if table_columns(conn, table).contains("parent_id") {
+        filters.push("parent_id IS NULL");
+    }
+    if let (DbLayout::Migrating { cursor }, DbSchema::V1) = (layout, source) {
+        // Only the 1.x sessions OpenCode has not copied yet. The `NOT IN`
+        // guard covers ids that were already present in `session_v2`.
+        filters.push("(?1 IS NULL OR id < ?1)");
+        filters.push("id NOT IN (SELECT id FROM session_v2)");
+        params.push(cursor.clone());
+    }
+    let filter = if filters.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", filters.join(" AND "))
     };
-    let rows = stmt.query_map([], |row| {
+    let query = format!(
+        "SELECT id, directory, title, time_created, time_updated FROM {table}{filter} ORDER BY id"
+    );
+
+    let mut stmt = conn.prepare(&query).ok()?;
+    let rows = stmt
+        .query_map(params_from_iter(params.iter()), |row| {
+            Ok(SessionRow {
+                id: row.get(0)?,
+                directory: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                time_created: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                time_updated: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            })
+        })
+        .ok()?;
+    Some(rows.flatten().filter(|row| !row.id.is_empty()).collect())
+}
+
+fn table_columns(conn: &Connection, table: &str) -> HashSet<String> {
+    let Ok(mut stmt) = conn.prepare(&format!("PRAGMA table_info({table})")) else {
+        return HashSet::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+        return HashSet::new();
+    };
+    rows.flatten().collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    User,
+    Assistant,
+}
+
+impl Role {
+    fn parse(role: &str) -> Option<Role> {
+        match role {
+            "user" => Some(Role::User),
+            "assistant" => Some(Role::Assistant),
+            _ => None,
+        }
+    }
+}
+
+/// The user and assistant messages that have text, in order, per session id.
+type Conversations = HashMap<String, Vec<(Role, String)>>;
+
+/// OpenCode 1.x: the role is in `message.data`, the text in `part` rows of
+/// type `text`. Unreadable rows are skipped.
+fn load_v1_conversations(conn: &Connection) -> Conversations {
+    let mut texts: HashMap<String, Vec<String>> = HashMap::new();
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT message_id, data FROM part ORDER BY time_created, id")
+    {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
+            for (message_id, data) in rows.flatten() {
+                let Ok(part) = serde_json::from_str::<Value>(&data) else {
+                    continue;
+                };
+                if part.get("type").and_then(Value::as_str) != Some("text") {
+                    continue;
+                }
+                match part.get("text").and_then(Value::as_str) {
+                    Some(text) if !text.is_empty() => {
+                        texts.entry(message_id).or_default().push(text.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let mut conversations = Conversations::new();
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT id, session_id, data FROM message ORDER BY time_created, id")
+    {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }) {
+            for (message_id, session_id, data) in rows.flatten() {
+                let role = serde_json::from_str::<Value>(&data)
+                    .ok()
+                    .and_then(|v| v.get("role").and_then(Value::as_str).and_then(Role::parse));
+                let (Some(role), Some(chunks)) = (role, texts.remove(&message_id)) else {
+                    continue;
+                };
+                conversations
+                    .entry(session_id)
+                    .or_default()
+                    .push((role, chunks.join("\n")));
+            }
+        }
+    }
+    conversations
+}
+
+/// OpenCode 2.x: one `session_message` row per turn, ordered by `seq`. Only
+/// user prompts and assistant text are read; the `synthetic`, `system`,
+/// `compaction`, `idle` and `model-switched` rows are not conversation.
+fn load_v2_conversations(conn: &Connection) -> Conversations {
+    let mut conversations = Conversations::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, type, data FROM session_message
+         WHERE type IN ('user', 'assistant') ORDER BY session_id, seq",
+    ) else {
+        return conversations;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
-            row.get::<_, Option<i64>>(3)?,
-            row.get::<_, Option<i64>>(4)?,
         ))
-    });
-    let rows = match rows {
-        Ok(r) => r,
-        Err(_) => return sessions,
+    }) else {
+        return conversations;
     };
-
-    for row in rows.flatten() {
-        let (id, directory, title, time_created, time_updated) = row;
-        if id.is_empty() {
-            continue;
-        }
-        let raw_ms = time_created.unwrap_or(0).max(time_updated.unwrap_or(0));
-        let timestamp = ms_to_secs(raw_ms);
-
-        let mut messages: Vec<String> = Vec::new();
-        let mut first_user = String::new();
-        let mut turn_count: u32 = 0;
-
-        if let Ok(mut mstmt) = conn
-            .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created, id")
-        {
-            if let Ok(mrows) = mstmt.query_map([&id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            }) {
-                for m in mrows.flatten() {
-                    let (msg_id, data) = m;
-                    let role = serde_json::from_str::<Value>(&data)
-                        .ok()
-                        .and_then(|v| v.get("role").and_then(|r| r.as_str()).map(String::from))
-                        .unwrap_or_default();
-                    let prefix = match role.as_str() {
-                        "user" => USER_PREFIX,
-                        "assistant" => ASSISTANT_PREFIX,
-                        _ => continue,
-                    };
-
-                    let mut text = String::new();
-                    if let Ok(mut pstmt) = conn.prepare(
-                        "SELECT data FROM part WHERE message_id = ?1 ORDER BY time_created, id",
-                    ) {
-                        if let Ok(prows) = pstmt.query_map([&msg_id], |r| r.get::<_, String>(0)) {
-                            let mut chunks = Vec::new();
-                            for pdata in prows.flatten() {
-                                if let Ok(pv) = serde_json::from_str::<Value>(&pdata) {
-                                    if pv.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                        if let Some(t) = pv.get("text").and_then(|t| t.as_str()) {
-                                            if !t.is_empty() {
-                                                chunks.push(t.to_string());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            text = chunks.join("\n");
-                        }
-                    }
-
-                    if text.is_empty() {
-                        continue;
-                    }
-                    if role == "user" && first_user.is_empty() {
-                        first_user = text.clone();
-                    }
-                    messages.push(format!("{prefix}{text}"));
-                    turn_count += 1;
-                }
-            }
-        }
-
-        let title_source = if !title.trim().is_empty() {
-            title
-        } else if !first_user.is_empty() {
-            first_user
-        } else {
+    for (session_id, kind, data) in rows.flatten() {
+        let Some(role) = Role::parse(&kind) else {
             continue;
         };
-
-        sessions.push(Session {
-            id,
-            agent: AgentId::OpenCode,
-            title: truncate_title(&title_source, TITLE_MAX, false),
-            directory,
-            timestamp,
-            content: join_content(&messages),
-            message_count: turn_count,
-            mtime: db_mtime,
-            yolo: false,
-            source_path: None,
-        });
+        let Ok(data) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        let text = v2_message_text(role, &data);
+        if text.is_empty() {
+            continue;
+        }
+        conversations
+            .entry(session_id)
+            .or_default()
+            .push((role, text));
     }
+    conversations
+}
 
-    sessions
+/// A user row keeps the prompt in `text`. An assistant row keeps an ordered
+/// `content` array; its `text` items are the visible reply, and its
+/// `reasoning` and `tool` items are skipped.
+fn v2_message_text(role: Role, data: &Value) -> String {
+    let chunks: Vec<&str> = match role {
+        Role::User => data
+            .get("text")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect(),
+        Role::Assistant => data
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|item| item.get("text").and_then(Value::as_str))
+            .collect(),
+    };
+    chunks
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `None` for a session with neither a title nor a user prompt: there is
+/// nothing to show for it.
+fn build_session(row: SessionRow, messages: &[(Role, String)], db_mtime: i64) -> Option<Session> {
+    let title_source = if !row.title.trim().is_empty() {
+        row.title.as_str()
+    } else {
+        messages
+            .iter()
+            .find(|(role, _)| *role == Role::User)
+            .map(|(_, text)| text.as_str())?
+    };
+    let title = truncate_title(title_source, TITLE_MAX, false);
+
+    let rendered: Vec<String> = messages
+        .iter()
+        .map(|(role, text)| {
+            let prefix = match role {
+                Role::User => USER_PREFIX,
+                Role::Assistant => ASSISTANT_PREFIX,
+            };
+            format!("{prefix}{text}")
+        })
+        .collect();
+
+    Some(Session {
+        id: row.id,
+        agent: AgentId::OpenCode,
+        title,
+        directory: row.directory,
+        timestamp: ms_to_secs(row.time_created.max(row.time_updated)),
+        content: join_content(&rendered),
+        message_count: rendered.len() as u32,
+        mtime: db_mtime,
+        yolo: false,
+        source_path: None,
+    })
 }
 
 impl Adapter for OpenCodeAdapter {
     fn id(&self) -> AgentId {
         AgentId::OpenCode
+    }
+
+    fn mtime_is_per_session(&self) -> bool {
+        false
     }
 
     fn supports_fork(&self) -> bool {
@@ -189,7 +472,7 @@ impl Adapter for OpenCodeAdapter {
 
     fn scan(&self) -> Result<HashMap<String, (PathBuf, i64)>> {
         let mut out = HashMap::new();
-        let Ok(mtime) = mtime_nanos(&self.db_path) else {
+        let Ok(mtime) = db_change_mtime(&self.db_path) else {
             return Ok(out);
         };
         for s in load_db_sessions(&self.db_path, mtime) {
@@ -221,11 +504,19 @@ impl Adapter for OpenCodeAdapter {
             });
         }
 
-        let mtime = mtime_nanos(&self.db_path).unwrap_or(0);
-        let mut upserts = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mtime = db_change_mtime(&self.db_path).unwrap_or(0);
+        let Some(sessions) = read_db_sessions(&self.db_path, mtime) else {
+            // The file is there but cannot be read right now. Keep what is
+            // indexed instead of reporting every known session as deleted.
+            return Ok(IncrementalResult {
+                upserts: Vec::new(),
+                deleted: Vec::new(),
+            });
+        };
 
-        for session in load_db_sessions(&self.db_path, mtime) {
+        let mut upserts = Vec::new();
+        let mut seen = HashSet::new();
+        for session in sessions {
             seen.insert(session.id.clone());
             let changed = match known.get(&SessionKey::from(&session)) {
                 None => true,
@@ -246,13 +537,16 @@ impl Adapter for OpenCodeAdapter {
         Ok(IncrementalResult { upserts, deleted })
     }
 
+    /// `opencode [directory] --session <id>` opens the TUI on that session.
+    /// OpenCode 1.x and 2.x both accept this form.
     fn resume_command(&self, session: &Session, _yolo: bool) -> Vec<String> {
-        vec![
-            "opencode".to_string(),
-            session.directory.clone(),
-            "--session".to_string(),
-            session.id.clone(),
-        ]
+        let mut cmd = vec!["opencode".to_string()];
+        if !session.directory.is_empty() {
+            cmd.push(session.directory.clone());
+        }
+        cmd.push("--session".to_string());
+        cmd.push(session.id.clone());
+        cmd
     }
 
     fn fork_command(

@@ -1,9 +1,12 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "aiz", version, about, long_about = None)]
+#[command(name = "hopback", version, about, long_about = None)]
 pub struct Cli {
-    #[arg(default_value = "", help = "Free-text search plus keyword filters")]
+    #[arg(
+        default_value = "",
+        help = "Search text plus keyword filters, or `.` to resume the newest session of the current folder"
+    )]
     pub query: String,
 
     #[arg(short = 'a', long = "agent", help = "Filter by agent id")]
@@ -26,6 +29,46 @@ pub struct Cli {
     pub list: bool,
 
     #[arg(
+        long = "json",
+        help = "Print matching sessions as one JSON object and exit"
+    )]
+    pub json: bool,
+
+    #[arg(
+        long = "limit",
+        value_name = "N",
+        conflicts_with = "all",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Maximum sessions to return (default: 50 for --json, 200 for --list)"
+    )]
+    pub limit: Option<u64>,
+
+    #[arg(long = "offset", value_name = "N", help = "Skip this many matches")]
+    pub offset: Option<usize>,
+
+    #[arg(long = "all", help = "Return every match from the requested offset")]
+    pub all: bool,
+
+    #[arg(
+        long = "no-refresh",
+        global = true,
+        help = "Serve the existing index without scanning agent files"
+    )]
+    pub no_refresh: bool,
+
+    #[arg(
+        long = "include-hidden",
+        help = "Include sessions hidden in hopback in --json and --list output"
+    )]
+    pub include_hidden: bool,
+
+    #[arg(
+        long = "include-messages",
+        help = "Include the conversation text of each session in --json output"
+    )]
+    pub include_messages: bool,
+
+    #[arg(
         long = "rebuild",
         help = "Drop and reconstruct the index from agent files"
     )]
@@ -35,7 +78,20 @@ pub struct Cli {
     pub stats: bool,
 
     #[arg(
+        long = "agent-context",
+        help = "Print instructions for coding agents that want to use hopback, and exit"
+    )]
+    pub agent_context: bool,
+
+    #[arg(
+        long = "print",
+        help = "Print the folder and the resume command instead of running it"
+    )]
+    pub print: bool,
+
+    #[arg(
         long = "yolo",
+        global = true,
         help = "Launch with the agent's skip-permission flags where supported"
     )]
     pub yolo: bool,
@@ -69,11 +125,74 @@ pub enum Command {
         )]
         no_register_codex_index: bool,
 
+        #[arg(
+            long = "json",
+            help = "Print the fork as one JSON object and do not launch it"
+        )]
+        json: bool,
+
         #[arg(help = "Session selector, either raw id or agent:id")]
         session_id: String,
     },
 
-    #[command(about = "Manage aiz configuration")]
+    #[command(about = "Pin a session to the top of the list")]
+    Pin {
+        #[command(flatten)]
+        target: SessionArg,
+    },
+
+    #[command(about = "Remove a session's pin")]
+    Unpin {
+        #[command(flatten)]
+        target: SessionArg,
+    },
+
+    #[command(about = "Give a session a title inside hopback")]
+    Rename {
+        #[command(flatten)]
+        target: SessionArg,
+
+        #[arg(help = "The new title", required_unless_present = "reset")]
+        title: Option<String>,
+
+        #[arg(
+            long = "reset",
+            conflicts_with = "title",
+            help = "Remove the local title and show the agent's own again"
+        )]
+        reset: bool,
+    },
+
+    #[command(about = "Hide a session from hopback")]
+    Hide {
+        #[command(flatten)]
+        target: SessionArg,
+    },
+
+    #[command(about = "Show a hidden session again")]
+    Unhide {
+        #[command(flatten)]
+        target: SessionArg,
+    },
+
+    #[command(about = "Print a shell completion script")]
+    Completions {
+        #[arg(value_enum, help = "The shell to generate for")]
+        shell: clap_complete::Shell,
+
+        #[arg(
+            long = "command",
+            value_name = "NAME",
+            value_parser = ["hopback", "hb"],
+            help = "Complete this command name (default: the name hopback was started as)"
+        )]
+        command: Option<String>,
+    },
+
+    #[command(about = "Print the man page in roff format")]
+    Man,
+
+    #[command(about = "Manage hopback configuration")]
     Config {
         #[command(subcommand)]
         action: ConfigAction,
@@ -120,4 +239,17 @@ pub enum HiddenAction {
 
     #[command(about = "Unhide every locally hidden session")]
     Reset,
+}
+
+/// The session a metadata command acts on, and how to report the result.
+#[derive(Debug, clap::Args)]
+pub struct SessionArg {
+    #[arg(help = "Session selector, either raw id or agent:id")]
+    pub session: String,
+
+    #[arg(
+        long = "json",
+        help = "Print the session as one JSON object after the change"
+    )]
+    pub json: bool,
 }

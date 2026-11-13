@@ -31,81 +31,53 @@ pub fn can_fork(session: &Session) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a launch adds the agent's skip-permission flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YoloDecision {
     Off,
 
     On,
-
-    Prompt,
 }
 
+/// The decision for resuming or natively forking `session`. `--yolo` and the
+/// `always_yolo` policy turn the flags on and `always_normal` turns them off.
+/// Otherwise, with `inherit_known` or no stored policy, the session keeps the
+/// mode it was started with, where its agent records that.
 pub fn launch_permission_decision(
     session: &Session,
     flag_yolo: bool,
     policy: Option<PermissionPolicy>,
 ) -> YoloDecision {
-    if flag_yolo {
-        return YoloDecision::On;
-    }
-    let Some(adapter) = adapter_for(session) else {
-        return YoloDecision::Off;
-    };
-    if !adapter.supports_yolo() {
-        return YoloDecision::Off;
-    }
-    match policy {
-        None => YoloDecision::Prompt,
-        Some(PermissionPolicy::AlwaysNormal) => YoloDecision::Off,
-        Some(PermissionPolicy::AlwaysYolo) => YoloDecision::On,
-        Some(PermissionPolicy::InheritKnown) => inherited_yolo_decision(session),
-    }
+    launch_permission_decision_for_agent(session.agent, flag_yolo, policy, inherited_yolo(session))
 }
 
+/// The same decision for a session of `agent` that does not exist yet: a
+/// translated fork. `source_yolo` is the mode of the session it is made from.
 pub fn launch_permission_decision_for_agent(
     agent: AgentId,
     flag_yolo: bool,
     policy: Option<PermissionPolicy>,
+    source_yolo: bool,
 ) -> YoloDecision {
-    if flag_yolo {
-        return YoloDecision::On;
-    }
-    let Some(adapter) = adapter_for_agent(agent) else {
-        return YoloDecision::Off;
-    };
-    if !adapter.supports_yolo() {
-        return YoloDecision::Off;
-    }
-    match policy {
-        None => YoloDecision::Prompt,
-        Some(PermissionPolicy::AlwaysNormal) => YoloDecision::Off,
-        Some(PermissionPolicy::AlwaysYolo) => YoloDecision::On,
-        Some(PermissionPolicy::InheritKnown) => {
-            if adapter.detects_yolo() {
-                YoloDecision::Off
-            } else {
-                YoloDecision::Prompt
-            }
-        }
+    let supported = adapter_for_agent(agent).is_some_and(|a| a.supports_yolo());
+    let on = supported
+        && match policy {
+            _ if flag_yolo => true,
+            Some(PermissionPolicy::AlwaysNormal) => false,
+            Some(PermissionPolicy::AlwaysYolo) => true,
+            Some(PermissionPolicy::InheritKnown) | None => source_yolo,
+        };
+    if on {
+        YoloDecision::On
+    } else {
+        YoloDecision::Off
     }
 }
 
-pub fn inherited_yolo_decision(session: &Session) -> YoloDecision {
-    let Some(adapter) = adapter_for(session) else {
-        return YoloDecision::Off;
-    };
-    if !adapter.supports_yolo() {
-        return YoloDecision::Off;
-    }
-    if adapter.detects_yolo() {
-        if session.yolo {
-            YoloDecision::On
-        } else {
-            YoloDecision::Off
-        }
-    } else {
-        YoloDecision::Prompt
-    }
+/// Whether `session` was started with its agent's skip-permission mode, as
+/// far as the agent's files say. Unknown counts as no.
+pub fn inherited_yolo(session: &Session) -> bool {
+    session.yolo && adapter_for(session).is_some_and(|a| a.detects_yolo())
 }
 
 pub fn supports_yolo(agent: AgentId) -> bool {
@@ -232,14 +204,42 @@ mod tests {
     }
 
     #[test]
-    fn launch_permission_no_policy_prompts_for_yolo_capable_agents() {
+    fn launch_permission_no_policy_keeps_the_mode_of_the_session() {
+        for agent in [AgentId::Claude, AgentId::Codex] {
+            assert_eq!(
+                launch_permission_decision(&sess_yolo(agent, false), false, None),
+                YoloDecision::Off
+            );
+            assert_eq!(
+                launch_permission_decision(&sess_yolo(agent, true), false, None),
+                YoloDecision::On
+            );
+        }
+        // An agent whose files do not record the mode resumes normally.
         assert_eq!(
-            launch_permission_decision(&sess_yolo(AgentId::Claude, false), false, None),
-            YoloDecision::Prompt
+            launch_permission_decision(&sess_yolo(AgentId::Gemini, true), false, None),
+            YoloDecision::Off
+        );
+    }
+
+    #[test]
+    fn a_translated_fork_keeps_the_mode_of_its_source() {
+        assert_eq!(
+            launch_permission_decision_for_agent(AgentId::Codex, false, None, true),
+            YoloDecision::On
         );
         assert_eq!(
-            launch_permission_decision(&sess_yolo(AgentId::Codex, false), false, None),
-            YoloDecision::Prompt
+            launch_permission_decision_for_agent(AgentId::Codex, false, None, false),
+            YoloDecision::Off
+        );
+        assert_eq!(
+            launch_permission_decision_for_agent(
+                AgentId::Codex,
+                false,
+                Some(PermissionPolicy::AlwaysNormal),
+                true
+            ),
+            YoloDecision::Off
         );
     }
 
@@ -283,11 +283,11 @@ mod tests {
         );
         assert_eq!(
             launch_permission_decision(
-                &sess_yolo(AgentId::Claude, false),
+                &sess_yolo(AgentId::Claude, true),
                 false,
                 Some(PermissionPolicy::InheritKnown)
             ),
-            YoloDecision::Prompt
+            YoloDecision::On
         );
     }
 

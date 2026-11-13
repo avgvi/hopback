@@ -1,0 +1,44 @@
+# Builds wheels that carry the two prebuilt binaries, so that
+# `uv tool install hopback` and `pipx install hopback` install `hopback` and
+# `hb` without a Rust toolchain. There is no Python code in this package.
+
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[project]
+name = "hopback"
+description = "Find, resume and fork coding-agent sessions across Claude Code, Codex and more"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["cli", "tui", "claude-code", "codex", "coding-agents", "sessions"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Rust",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+# The version comes from Cargo.toml.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/avgvi/hopback"
+Repository = "https://github.com/avgvi/hopback"
+Changelog = "https://github.com/avgvi/hopback/blob/main/CHANGELOG.md"
+
+[tool.maturin]
+# "bin" packages every [[bin]] target of the crate: both `hopback` and `hb`.
+bindings = "bin"
+manifest-path = "Cargo.toml"
+strip = true
+include = [
+    { path = "LICENSE", format = "sdist" },
+    { path = "skills/**/*", format = "sdist" },
+    { path = "man/**/*", format = "sdist" },
+]

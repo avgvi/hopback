@@ -9,6 +9,12 @@ use crate::config::AgentId;
 use crate::model::{Session, SessionKey};
 use crate::store::Store;
 
+/// Bumped whenever parsing changes in a way that should re-read sessions that
+/// are already indexed (new title rules, new fields). Pins, renames and hidden
+/// flags live in their own table and survive the rebuild.
+pub const INDEX_FORMAT: &str = "3";
+const INDEX_FORMAT_KEY: &str = "index_format";
+
 type OnSession<'a> = &'a mut dyn FnMut(&Session);
 type OnDeleted<'a> = &'a mut dyn FnMut(AgentId, &[String]);
 
@@ -72,6 +78,12 @@ fn run(
     mut on_session: Option<OnSession<'_>>,
     mut on_deleted: Option<OnDeleted<'_>>,
 ) -> Result<IndexStats> {
+    // Sessions indexed by an older build keep their old titles and may be
+    // missing sessions the adapters now find. A format change re-reads all.
+    let format_changed = store.get_setting(INDEX_FORMAT_KEY)?.as_deref() != Some(INDEX_FORMAT);
+    let had_sessions = format_changed && store.session_count()? > 0;
+    let force_rebuild = force_rebuild || had_sessions;
+
     if force_rebuild {
         store.clear_sessions()?;
     }
@@ -148,6 +160,10 @@ fn run(
         )?;
     }
 
+    if format_changed {
+        store.set_setting(INDEX_FORMAT_KEY, INDEX_FORMAT)?;
+    }
+
     let _ = store.reconcile_fork_links();
 
     Ok(stats)
@@ -163,9 +179,14 @@ fn scan_one(
 
     if !adapter.uses_dir_mtime_fastpath() {
         let mut emit = |s: &Session| {
-            let _ = tx.send(s.clone());
+            let mut s = s.clone();
+            crate::title::finalize(&mut s);
+            let _ = tx.send(s);
         };
-        let res = adapter.find_incremental(known, &mut emit)?;
+        let mut res = adapter.find_incremental(known, &mut emit)?;
+        for s in &mut res.upserts {
+            crate::title::finalize(s);
+        }
         return Ok(AdapterPass {
             agent,
             upserts: res.upserts,
@@ -225,6 +246,7 @@ fn scan_one(
         match adapter.parse(path) {
             Ok(Some(mut session)) => {
                 session.mtime = *mtime;
+                crate::title::finalize(&mut session);
                 let _ = tx.send(session.clone());
                 upserts.push(session);
             }

@@ -1,95 +1,196 @@
-# aiz
+<br />
+<p align="center">
+  <img alt="hopback: find, resume and fork coding-agent sessions from one terminal" src="docs/brand/banner.png" width="100%">
+</p>
 
-> A fast, local-first TUI for finding, resuming, organizing, and forking AI
-> coding sessions across Claude Code, Codex, and OpenCode.
+<h3><p align="center">Hop back into any coding-agent session</p></h3>
 
-`aiz` gives you one searchable index for your agent history. It scans each
-agent's local session files, ranks matches with full-text and fuzzy search, and
-hands you back into the selected session from its original working directory.
+<p align="center">
+  <a href="https://crates.io/crates/hopback"><img alt="crates.io downloads" src="https://img.shields.io/crates/d/hopback"></a>
+  <a href="https://www.npmjs.com/package/hopback"><img alt="npm downloads per week" src="https://img.shields.io/npm/dw/hopback"></a>
+</p>
 
-![aiz TUI screenshot](docs/aiz_screen.png)
+<h4><p align="center">
+<a href="#install">[Install]</a>
+- <a href="#quick-start">[Quick start]</a>
+- <a href="#supported-agents">[Agents]</a>
+- <a href="https://avgvi.github.io/hopback/">[Docs]</a>
+- <a href="CHANGELOG.md">[Changelog]</a>
+</p></h4>
 
-## What You Can Do
+<p align="center">
+  <a href="https://crates.io/crates/hopback"><img alt="crates.io version" src="https://img.shields.io/crates/v/hopback"></a>
+  <a href="https://github.com/avgvi/hopback/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/avgvi/hopback/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Platforms: macOS and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue.svg">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
+</p>
+<br />
 
-- **Find sessions across agents.** Search Claude Code, Codex, and OpenCode
-  sessions from one TUI.
-- **Resume in place.** Press `Enter` to resume the selected session with the
-  agent's own resume flow.
-- **Pin important sessions.** Press `Ctrl+P` to keep useful sessions floating at
-  the top of the list.
-- **Rename sessions locally.** Press `Ctrl+R` to give a session a readable title
-  without editing the agent's source files.
-- **Fork sessions.** Press `Ctrl+F` to create a new session from the selected
-  one. Claude Code, Codex, and OpenCode support native forks where available.
-- **Move work between Claude Code and Codex.** Use translated forks to turn a
-  Claude Code session into a Codex session, or a Codex session into a Claude Code
-  session.
-- **Hide noise.** Press `Ctrl+X` to hide sessions from `aiz` without deleting or
-  modifying the original agent history.
-- **Preview session history.** Toggle the preview pane to inspect the selected
-  conversation before resuming or forking it.
+`hb` finds your Claude Code, Codex, Antigravity and other agents' sessions in one list, resumes the one you pick in its own folder, and can fork a Claude Code session into Codex or back.
 
-## Requirements
+![hopback browsing the sessions of four agents, searching them, resuming one in Claude Code, and forking it into Codex](docs/demo.gif)
 
-Requires a stable Rust toolchain. SQLite is bundled through `rusqlite`, so there
-is no separate SQLite install step.
+## Install
 
-`aiz` currently targets macOS and Linux. Resume handoff uses Unix `exec`, so
-Windows is not supported yet.
+Every channel installs two commands that are the same program: `hopback` and the short `hb`.
 
-## Quick Start
+```bash
+# Homebrew (macOS and Linux)
+brew install avgvi/tap/hopback
 
-Once the TUI is open, start typing to filter sessions by title, directory, or
-conversation text. The results update live as you type.
+# Shell installer: prebuilt binary for macOS or Linux, arm64 or x86_64
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/avgvi/hopback/releases/latest/download/hopback-installer.sh | sh
 
-Use `Tab` and `Shift+Tab` to move between Claude Code, Codex, OpenCode, and the
-combined view. Use `Up` and `Down` to choose a session.
+# Cargo
+cargo install hopback        # builds from source
+cargo binstall hopback       # downloads the release binary
 
-Toggle the preview pane with `` Ctrl+` `` when you want to inspect the selected
-conversation before opening it. Press `Enter` to resume the selected session.
+# npm
+npm install -g hopback       # or run once: npx hopback
 
-Use `Ctrl+P` to pin important sessions, `Ctrl+R` to rename a session locally,
-and `Ctrl+X` to hide sessions you do not want to see in `aiz`.
+# Python tools
+uv tool install hopback      # or: pipx install hopback
 
-Use `Ctrl+F` to fork the selected session. Claude Code and Codex sessions can be
-translated into each other, and OpenCode supports native forks.
+# Nix
+nix run github:avgvi/hopback # or add the flake to your profile
 
-## TUI Controls
+# mise
+mise use -g ubi:avgvi/hopback
+```
 
-| Key | Action |
-| --- | --- |
-| type | Update the search query. |
-| `Up` / `Down` | Move the selection. |
-| `PgUp` / `PgDn` | Move by 10 rows. |
-| `Tab` / `Shift+Tab` | Cycle agent filters. |
-| `Enter` | Resume the selected session. |
-| `Ctrl+F` | Fork the selected session. |
-| `Ctrl+P` | Pin or unpin the selected session. |
-| `Ctrl+R` | Rename the selected session inside `aiz`. |
-| `Ctrl+X` | Hide the selected session from `aiz`. |
-| `` Ctrl+` `` | Toggle the preview pane. |
-| `Ctrl+Up` / `Ctrl+Down` | Resize the preview pane. |
-| `Backspace` / `Ctrl+U` | Edit or clear the query. |
-| `Esc` / `Ctrl+C` | Quit. |
+## Quick start
 
-Pinned, renamed, and hidden states are local `aiz` metadata. They do not edit,
-delete, archive, or rewrite the original agent session files.
+```bash
+hb .              # continue the newest session of this folder, whatever the agent
+hb "auth bug"     # search, then resume or fork
+hb                # browse the newest sessions
+```
 
-## Forking
+- `hb .` skips the list. It resumes the most recently used session whose folder is the current one, or the closest parent folder that has one. `hb . --agent codex` narrows it to one agent, and `hb . --print` shows the folder and command instead of running them.
+- In the list, start typing to search titles, messages and paths. Press Enter to resume the selected session with its own agent, in the folder it ran in, and in the permission mode it was started with. `--yolo` or `hb config permission set normal|yolo|inherit` changes that.
+- Tab steps through the agents. It writes the filter into the search line (`agent:claude`), so what you see there is always what is being filtered.
 
-`aiz` supports two fork styles:
+![The session list of hopback, with a pinned session, a fork, and the preview of the selected session](docs/screenshot.png)
 
-- **Native fork:** ask the source agent to fork its own session.
-- **Translated fork:** create a new Claude Code or Codex session from the other
-  agent's conversation history.
+Enter puts you back in the agent, with the conversation where you left it:
 
-From the TUI, select a session and press `Ctrl+F`. If more than one fork target
-is available, `aiz` opens a target picker.
+![Claude Code reopened on the selected session, showing the end of the conversation and its prompt](docs/screen-resume.png)
 
-Translated forks are intentionally limited to Claude Code and Codex. Source
-session files are read-only; `aiz` writes a new target-agent session file and then
-launches the target agent.
+## Translated forks: move a session to another agent
+
+Press Ctrl+F on a Claude Code session and pick "translated codex fork". hopback reads the conversation, writes it as a new Codex session in the same folder, and opens Codex on it. The same works from Codex to Claude Code. You keep the context when you switch agents: the fork holds the conversation as it was, and the only thing hopback adds is `[hopback]` in front of its title.
+
+```bash
+hb fork --to codex claude:5f0c2a9e-...            # same thing from the command line
+hb fork --to codex --dry-run claude:5f0c2a9e-...  # see what would be written
+hb fork claude:5f0c2a9e-...                       # native fork: the agent forks its own session
+```
+
+- Translated forks exist between Claude Code and Codex.
+- Native forks are available where the agent has one: Claude Code, Codex, OpenCode and Goose.
+- A forked session shows a `↳` mark in the list, and `forked_from` in the JSON output.
+
+![The fork menu on a Claude Code session, with the translated Codex fork selected](docs/screen-fork.png)
+
+## Supported agents
+
+| Agent | Tab | Resumes with | Native fork | Translated fork |
+|---|---|---|---|---|
+| Claude Code | `claude` | `claude --resume <id>` | yes | to and from Codex |
+| Codex | `codex` | `codex resume <id>` | yes | to and from Claude Code |
+| Antigravity | `agy` | `agy --conversation <id>` | no | no |
+| OpenCode | `opencode` | `opencode <dir> --session <id>` | yes | no |
+| Kimi Code | `kimi` | `kimi --session <id>` | no | no |
+| Kiro CLI | `kiro` | `kiro-cli chat --resume-id <id>` | no | no |
+| Goose | `goose` | `goose session --resume --session-id <id>` | yes | no |
+| Pi | `pi` | `pi --session <id>` | no | no |
+| Cursor CLI | `cursor` | `agent --resume <id>` | no | no |
+| Grok Build | `grok` | `grok --resume <id>` | no | no |
+| Gemini CLI | `gemini` | `gemini --resume <id>` | no | no |
+| GitHub Copilot CLI | `copilot` | `copilot --resume <id>` | no | no |
+| Copilot in VS Code | `vscode` | `code <dir>` | no | no |
+| Crush | `crush` | `crush --session <id>` | no | no |
+| Mistral Vibe | `vibe` | `vibe --resume <id>` | no | no |
+
+hopback only reads the agents' files. Subagent sessions and sessions with no prompt are left out.
+
+The Goose desktop app on macOS does not put `goose` on `PATH`. When it is missing there, hopback runs the copy inside `Goose.app`.
+
+## Keys
+
+Typing always goes to the search, so actions use a modifier.
+
+| Key | Does |
+|---|---|
+| Enter | Resume the selected session |
+| ↑ ↓, PgUp, PgDn | Move |
+| Tab / Shift+Tab | Next or previous agent tab. Tab first finishes a suggested filter value |
+| Ctrl+T | Pin to the top, or unpin |
+| Ctrl+R or F2 | Rename inside hopback |
+| Ctrl+F | Fork |
+| Ctrl+Y | Copy the resume command |
+| Ctrl+X | Hide from hopback (asks first) |
+| Ctrl+O | Menu of the five actions above, each with its key |
+| Ctrl+P | Preview on or off |
+| F1 | Help: every key on one screen |
+| Esc | Clear the search; quit when it is already empty |
+| ← → Home End, Ctrl+A, Ctrl+E, Ctrl+W, Ctrl+U, Delete | Edit the search text |
+| Mouse | Click selects, double-click resumes, right-click opens the actions menu, the wheel scrolls the list or the preview |
+
+Pinned sessions (`★`) stay at the top. A rename changes the title only inside hopback. Hiding removes a session from hopback's list and nothing else.
+
+![The Ctrl+O menu: pin, rename, fork, copy the resume command, hide](docs/screen-actions.png)
+
+## Search
+
+Free text matches titles, messages and folders. Keywords narrow it. They are colored as you type, and a value hopback does not know turns red.
+
+| Keyword | Example | Matches |
+|---|---|---|
+| `agent:` | `agent:claude`, `agent:claude,codex`, `agent:!codex` | sessions of those agents, or of all but one |
+| `dir:` | `dir:backend` | sessions whose folder contains the text |
+| `date:` | `date:today`, `date:yesterday`, `date:week`, `date:month`, `date:<3d`, `date:>2w` | sessions by age |
+
+While you type an agent or a date, the rest is suggested after the cursor (`agent:cl` shows `aude`). Tab or → takes it, and the list already shows the suggested filter.
+
+![A search for "discount date:week": four sessions from three agents, with the matches highlighted in the preview](docs/screen-search.png)
+
+## Scripts and agents
+
+```bash
+hb --json --limit 10 "agent:codex api error"   # one JSON object on stdout
+hb --json --include-messages --limit 1 "auth"   # with the conversation text
+hb pin claude:5f0c2a9e-...                      # also: unpin, rename, hide, unhide
+hb fork --json --to codex claude:5f0c2a9e-...   # the new session as JSON, nothing launched
+hb --agent-context                              # instructions for a coding agent
+```
+
+`--json` has a versioned schema with paging, and every session carries the exact `resume_command`. See [docs/json.md](docs/json.md). `hb --agent-context` prints an Agent Skill that tells a coding agent how to search, page and resume safely; [llms.txt](llms.txt) has the short version.
+
+Shell completions and the man page come from the binary:
+
+```bash
+hb completions zsh > ~/.zfunc/_hb     # bash, fish, elvish and powershell too
+hopback man > hopback.1
+```
+
+## Your data
+
+- hopback keeps its index, pins, local titles and hidden flags in one SQLite file, `~/.cache/hopback/hopback.db` (or under `$XDG_CACHE_HOME`).
+- It never edits, moves or deletes an agent's own session files. A translated fork writes a new session for the target agent and leaves the source alone.
+- Nothing is sent anywhere. There is no network code.
+- Coming from aiz: the first run copies your pins, local titles, hidden sessions and permission setting from `~/.cache/aiz`.
+
+## Build from source
+
+```bash
+git clone https://github.com/avgvi/hopback
+cd hopback
+cargo install --path .       # installs hopback and hb into ~/.cargo/bin
+```
+
+[AGENTS.md](AGENTS.md) describes the code layout and the checks to run. [docs/packaging.md](docs/packaging.md) covers how releases are built, and [CHANGELOG.md](CHANGELOG.md) what changed.
 
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).

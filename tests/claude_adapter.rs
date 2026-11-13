@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use aiz::adapters::claude::ClaudeAdapter;
-use aiz::adapters::Adapter;
+use hopback::adapters::claude::ClaudeAdapter;
+use hopback::adapters::Adapter;
 
 fn write(path: &std::path::Path, contents: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -52,4 +52,29 @@ fn unavailable_when_dir_missing() {
     let adapter = ClaudeAdapter::with_sessions_dir(PathBuf::from("/definitely/not/here"));
     assert!(!adapter.is_available());
     assert!(adapter.scan().unwrap().is_empty());
+}
+
+#[test]
+fn the_last_recorded_permission_mode_decides_skip_permissions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root: PathBuf = tmp.path().join("projects");
+    let proj = root.join("-home-u-proj");
+    // Started normally, switched to bypass later: resumes with bypass.
+    write(
+        &proj.join("bypass.jsonl"),
+        "{\"type\":\"user\",\"cwd\":\"/home/u/proj\",\"permissionMode\":\"default\",\"message\":{\"content\":\"first prompt\"}}\n{\"type\":\"assistant\",\"message\":{\"content\":\"ok\"}}\n{\"type\":\"permission-mode\",\"permissionMode\":\"bypassPermissions\",\"sessionId\":\"bypass\"}\n",
+    );
+    // Bypass at first, back to the default mode at the end.
+    write(
+        &proj.join("normal.jsonl"),
+        "{\"type\":\"permission-mode\",\"permissionMode\":\"bypassPermissions\"}\n{\"type\":\"user\",\"cwd\":\"/home/u/proj\",\"permissionMode\":\"auto\",\"message\":{\"content\":\"second prompt\"}}\n{\"type\":\"assistant\",\"message\":{\"content\":\"ok\"}}\n",
+    );
+    let adapter = ClaudeAdapter::with_sessions_dir(root);
+    let scanned = adapter.scan().unwrap();
+    let yolo = |id: &str| {
+        let (path, _) = &scanned[id];
+        adapter.parse(path).unwrap().unwrap().yolo
+    };
+    assert!(yolo("bypass"));
+    assert!(!yolo("normal"));
 }

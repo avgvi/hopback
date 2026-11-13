@@ -1,0 +1,71 @@
+---
+title: Install
+description: Install hopback with Homebrew, the shell installer, Cargo, npm, uv, Nix or mise.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every channel installs two commands that are the same program: `hopback` and
+the short `hb`.
+
+<Tabs syncKey="install">
+	<TabItem label="Homebrew">
+		macOS and Linux.
+
+		```bash
+		brew install avgvi/tap/hopback
+		```
+	</TabItem>
+	<TabItem label="Shell installer">
+		A prebuilt binary for macOS or Linux, arm64 or x86_64.
+
+		```bash
+		curl --proto '=https' --tlsv1.2 -LsSf https://github.com/avgvi/hopback/releases/latest/download/hopback-installer.sh | sh
+		```
+	</TabItem>
+	<TabItem label="Cargo">
+		```bash
+		cargo install hopback        # builds from source
+		cargo binstall hopback       # downloads the release binary
+		```
+	</TabItem>
+	<TabItem label="npm">
+		```bash
+		npm install -g hopback       # or run once: npx hopback
+		```
+	</TabItem>
+	<TabItem label="Python tools">
+		```bash
+		uv tool install hopback      # or: pipx install hopback
+		```
+	</TabItem>
+	<TabItem label="Nix">
+		```bash
+		nix run github:avgvi/hopback # or add the flake to your profile
+		```
+	</TabItem>
+	<TabItem label="mise">
+		```bash
+		mise use -g ubi:avgvi/hopback
+		```
+	</TabItem>
+</Tabs>
+
+## Build from source
+
+```bash
+git clone https://github.com/avgvi/hopback
+cd hopback
+cargo install --path .       # installs hopback and hb into ~/.cargo/bin
+```
+
+## Shell completions and the man page
+
+Both come from the binary:
+
+```bash
+hb completions zsh > ~/.zfunc/_hb     # bash, fish, elvish and powershell too
+hopback man > hopback.1
+```
+
+Next: the [quick start](../quick-start/).

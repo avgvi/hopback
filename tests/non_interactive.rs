@@ -4,9 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use aiz::config::AgentId;
-use aiz::model::SessionKey;
-use aiz::store::Store;
+use hopback::config::AgentId;
+use hopback::model::SessionKey;
+use hopback::store::Store;
 
 fn write(path: &Path, contents: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -33,17 +33,17 @@ fn sandbox() -> tempfile::TempDir {
 }
 
 fn run(home: &Path, cache: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(aiz_bin())
+    Command::new(hopback_bin())
         .args(args)
         .env("HOME", home)
         .env("XDG_CACHE_HOME", cache)
         .env_remove("XDG_CONFIG_HOME")
         .output()
-        .expect("spawn aiz")
+        .expect("spawn hopback")
 }
 
-fn aiz_bin() -> std::path::PathBuf {
-    let cargo_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_aiz"));
+fn hopback_bin() -> std::path::PathBuf {
+    let cargo_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hopback"));
     if cargo_bin.components().count() > 1 {
         return cargo_bin;
     }
@@ -53,7 +53,7 @@ fn aiz_bin() -> std::path::PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.push("aiz");
+    path.push("hopback");
     path
 }
 
@@ -181,7 +181,10 @@ fn rebuild_reconstructs_store_from_files() {
 
     let first = run(&home, &cache, &["--no-tui"]);
     assert!(first.status.success());
-    assert!(cache.join("aiz/aiz.db").exists(), "store should be created");
+    assert!(
+        cache.join("hopback/hopback.db").exists(),
+        "store should be created"
+    );
 
     let out = run(&home, &cache, &["--rebuild", "--list"]);
     assert!(out.status.success());
@@ -245,7 +248,7 @@ fn config_hidden_list_unhide_and_reset() {
     let initial = run(&home, &cache, &["--no-tui"]);
     assert!(initial.status.success());
 
-    let store_path = cache.join("aiz/aiz.db");
+    let store_path = cache.join("hopback/hopback.db");
     let store = Store::open(&store_path).unwrap();
     store
         .set_hidden(&SessionKey::new(AgentId::Claude, "claude-sess-1"), true)
@@ -316,4 +319,74 @@ fn yolo_flag_reaches_native_fork_dry_run() {
         stdout.contains("--dangerously-skip-permissions"),
         "--yolo should reach Claude fork command:\n{stdout}"
     );
+}
+
+#[test]
+fn hb_and_hopback_are_the_same_program() {
+    let tmp = sandbox();
+    let home = tmp.path().join("home");
+    let cache = tmp.path().join("cache");
+
+    let long = run(&home, &cache, &["--no-tui"]);
+    let short = Command::new(env!("CARGO_BIN_EXE_hb"))
+        .args(["--no-tui"])
+        .env("HOME", &home)
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .expect("spawn hb");
+    assert!(long.status.success() && short.status.success());
+    assert_eq!(long.stdout, short.stdout);
+
+    let version = Command::new(env!("CARGO_BIN_EXE_hb"))
+        .arg("--version")
+        .output()
+        .expect("spawn hb --version");
+    let text = String::from_utf8_lossy(&version.stdout);
+    assert!(text.starts_with("hopback "), "unexpected version: {text}");
+}
+
+#[test]
+fn first_run_copies_aiz_metadata_and_keeps_the_old_database() {
+    let tmp = sandbox();
+    let home = tmp.path().join("home");
+    let cache = tmp.path().join("cache");
+
+    let legacy = cache.join("aiz/aiz.db");
+    {
+        let old = Store::open(&legacy).unwrap();
+        old.set_pinned(&SessionKey::new(AgentId::Claude, "claude-sess-1"), true)
+            .unwrap();
+        old.set_hidden(&SessionKey::new(AgentId::Codex, "codex-sess-1"), true)
+            .unwrap();
+        old.set_permission_policy(hopback::model::PermissionPolicy::AlwaysNormal)
+            .unwrap();
+    }
+
+    let out = run(&home, &cache, &["--no-tui"]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("from aiz"),
+        "import notice missing: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("fix the auth middleware bug"));
+    assert!(
+        !stdout.contains("refactor the react components"),
+        "the session hidden in aiz should stay hidden:\n{stdout}"
+    );
+
+    let store = Store::open(&cache.join("hopback/hopback.db")).unwrap();
+    assert!(store
+        .is_pinned(&SessionKey::new(AgentId::Claude, "claude-sess-1"))
+        .unwrap());
+    assert_eq!(
+        store.get_permission_policy().unwrap(),
+        Some(hopback::model::PermissionPolicy::AlwaysNormal)
+    );
+    assert!(legacy.exists(), "old aiz database must not be removed");
+
+    let again = run(&home, &cache, &["--no-tui"]);
+    assert!(String::from_utf8_lossy(&again.stderr).is_empty());
 }

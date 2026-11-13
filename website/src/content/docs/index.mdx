@@ -1,0 +1,56 @@
+---
+title: hopback
+description: Find, resume and fork coding-agent sessions across Claude Code, Codex and more.
+template: splash
+hero:
+  title: Hop back into any coding-agent session
+  tagline: hb finds your Claude Code, Codex, Antigravity and other agents' sessions in one list, resumes the one you pick in its own folder, and can fork a Claude Code session into Codex or back.
+  image:
+    dark: ../../../../docs/brand/icon-dark.svg
+    light: ../../../../docs/brand/icon-light.svg
+    alt: 'The hopback mark: two hops back'
+  actions:
+    - text: Install
+      link: /hopback/getting-started/install/
+      icon: right-arrow
+    - text: Quick start
+      link: /hopback/getting-started/quick-start/
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/avgvi/hopback
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+![hopback browsing the sessions of four agents, searching them, resuming one in Claude Code, and forking it into Codex](../../../../docs/demo.gif)
+
+<CardGrid>
+	<Card title="One list for 15 agents" icon="list-format">
+		Claude Code, Codex, Antigravity, OpenCode, Gemini CLI and ten more, newest
+		first, with a preview of each conversation. See the [supported
+		agents](reference/agents/).
+	</Card>
+	<Card title="Continue where you were" icon="rocket">
+		`hb .` resumes the newest session of the folder you are in, whatever the
+		agent. No list, no search.
+	</Card>
+	<Card title="Search everything" icon="magnifier">
+		Type to search titles, messages and paths. Narrow it with `agent:`, `dir:`
+		and `date:` [filters](guides/search/).
+	</Card>
+	<Card title="Fork across agents" icon="code-branch">
+		Ctrl+F turns a Claude Code session into a Codex session, or back, and
+		[keeps the context](guides/forks/).
+	</Card>
+	<Card title="Made for scripts and agents" icon="seti:json">
+		`hb --json` prints one JSON object with a [versioned
+		schema](reference/json/), and `hb --agent-context` tells a coding agent how
+		to use it.
+	</Card>
+	<Card title="Local only" icon="padlock">
+		One SQLite index on your machine, no network code, and the agents' own
+		files are [never changed](reference/data/).
+	</Card>
+</CardGrid>

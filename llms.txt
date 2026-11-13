@@ -1,0 +1,23 @@
+# hopback
+
+> hopback (short command `hb`) is a local-first terminal tool that indexes the session files of coding agents (Claude Code, Codex, Antigravity, OpenCode, Kimi Code, Kiro CLI, Goose, Pi, Cursor CLI, Grok Build, Gemini CLI, Copilot, Crush, Vibe), searches them, and resumes or forks the chosen session in its own folder. It can translate a Claude Code session into a Codex session and back. Nothing leaves the machine.
+
+Things to know before using it from a program:
+
+- `hb --json` prints exactly one JSON object on stdout with `schema_version`, `sessions` and `meta`. Page with `--limit` and `--offset` while `meta.state` is `more`.
+- Each session carries `resume_command`, an argv array to run from the session's `directory`. Do not rebuild it from shell text.
+- `hb .` resumes the most recently used session of the current folder; `hb . --print` prints the folder and command instead of running it.
+- `hb --agent-context` prints the bundled Agent Skill with the same guidance in more detail.
+- Pins, local titles and hidden flags live in hopback's own store.
+
+## Docs
+
+- [README](https://github.com/avgvi/hopback/blob/main/README.md): what it does, install commands, quick start, supported agents and keys
+- [JSON output](https://github.com/avgvi/hopback/blob/main/docs/json.md): the versioned schema for `--json`, the session commands and `fork --json`
+- [Agent Skill](https://github.com/avgvi/hopback/blob/main/skills/hopback/SKILL.md): how an agent should search, page, resume and fork with `hb`
+- [Man page](https://github.com/avgvi/hopback/blob/main/man/hopback.1): every flag and subcommand, generated from the CLI definition
+
+## Contributing
+
+- [AGENTS.md](https://github.com/avgvi/hopback/blob/main/AGENTS.md): code layout, the checks to run, and the rules for adapters, tests and the JSON contract
+- [Changelog](https://github.com/avgvi/hopback/blob/main/CHANGELOG.md): what changed in each release

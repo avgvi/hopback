@@ -32,6 +32,13 @@ pub trait Adapter: Send + Sync {
         false
     }
 
+    /// True when each session has its own file, so `Session::mtime` says when
+    /// that session was last written. Adapters that read every session from
+    /// one shared database return false.
+    fn mtime_is_per_session(&self) -> bool {
+        true
+    }
+
     fn is_available(&self) -> bool;
 
     fn scan(&self) -> Result<HashMap<String, (PathBuf, i64)>>;
@@ -111,12 +118,20 @@ pub trait Adapter: Send + Sync {
     }
 }
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod copilot_vscode;
 pub mod crush;
+pub mod cursor;
+pub mod gemini;
+pub mod goose;
+pub mod grok;
+pub mod kimi;
+pub mod kiro;
 pub mod opencode;
+pub mod pi;
 pub mod registry;
 pub mod vibe;
 

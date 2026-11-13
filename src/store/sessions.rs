@@ -13,6 +13,46 @@ const SESSION_COLS: &str = "s.id, s.agent, COALESCE(o.title, s.title) AS title, 
 const VISIBLE_WHERE: &str = "COALESCE(o.hidden, 0) = 0";
 const HIDDEN_WHERE: &str = "COALESCE(o.hidden, 0) = 1";
 
+/// A session together with hopback's own metadata about it. `session.title`
+/// is the title to show (the local rename when there is one);
+/// `original_title` is what the agent's files say.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionRecord {
+    pub session: Session,
+    pub original_title: String,
+    pub pinned: bool,
+    pub hidden: bool,
+    pub forked_from: Option<SessionKey>,
+}
+
+const RECORD_EXTRA_COLS: &str = "s.title AS original_title, \
+    COALESCE(o.pinned, 0) AS pinned, COALESCE(o.hidden, 0) AS hidden, \
+    (SELECT f.parent_agent FROM fork_links f \
+      WHERE f.fork_agent = s.agent AND f.fork_session_id = s.id \
+      ORDER BY f.id DESC LIMIT 1) AS parent_agent, \
+    (SELECT f.parent_session_id FROM fork_links f \
+      WHERE f.fork_agent = s.agent AND f.fork_session_id = s.id \
+      ORDER BY f.id DESC LIMIT 1) AS parent_id";
+
+fn row_to_record(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
+    let parent_agent: Option<String> = row.get("parent_agent")?;
+    let parent_id: Option<String> = row.get("parent_id")?;
+    let forked_from = match (
+        parent_agent.as_deref().and_then(AgentId::from_id),
+        parent_id,
+    ) {
+        (Some(agent), Some(id)) => Some(SessionKey::new(agent, id)),
+        _ => None,
+    };
+    Ok(SessionRecord {
+        session: row_to_session(row)?,
+        original_title: row.get("original_title")?,
+        pinned: row.get::<_, i64>("pinned")? != 0,
+        hidden: row.get::<_, i64>("hidden")? != 0,
+        forked_from,
+    })
+}
+
 fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<Session> {
     let agent_str: String = row.get("agent")?;
     let agent = AgentId::from_id(&agent_str).unwrap_or(AgentId::Claude);
@@ -143,6 +183,40 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every indexed session with its pin, hidden flag, rename and fork
+    /// parent, newest first. Hidden sessions are left out unless asked for.
+    pub fn list_records(&self, include_hidden: bool) -> Result<Vec<SessionRecord>> {
+        let filter = if include_hidden {
+            "1 = 1"
+        } else {
+            VISIBLE_WHERE
+        };
+        let sql = format!(
+            "SELECT {SESSION_COLS}, {RECORD_EXTRA_COLS} FROM sessions s
+             LEFT JOIN session_overrides o ON o.agent = s.agent AND o.session_id = s.id
+             WHERE {filter}
+             ORDER BY s.timestamp DESC, s.agent, s.id"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_record)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// One session with its metadata, whether or not it is hidden.
+    pub fn get_record(&self, key: &SessionKey) -> Result<Option<SessionRecord>> {
+        let sql = format!(
+            "SELECT {SESSION_COLS}, {RECORD_EXTRA_COLS} FROM sessions s
+             LEFT JOIN session_overrides o ON o.agent = s.agent AND o.session_id = s.id
+             WHERE s.agent = ?1 AND s.id = ?2"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query_map(params![key.agent.as_str(), key.id], row_to_record)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_session(&self, key: &SessionKey) -> Result<Option<Session>> {
         let sql = format!(
             "SELECT {SESSION_COLS} FROM sessions s
@@ -228,7 +302,7 @@ mod tests {
     fn insert_reopen_read_back_identically() {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
-        let path = dir.path().join("aiz.db");
+        let path = dir.path().join("hopback.db");
 
         let a = sess("a", AgentId::Claude, 100, 1000);
         let b = sess("b", AgentId::Codex, 200, 2000);

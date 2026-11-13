@@ -114,6 +114,35 @@ pub fn search_filtered(
     Ok(rank(&sessions, q, filters, &fts, limit))
 }
 
+/// Every match for `query`, in display order and without a limit: ranked like
+/// [`search_filtered`], then with pinned sessions moved to the top as the TUI
+/// shows them. Used by the paged, non-interactive listings.
+pub fn search_records(
+    store: &Store,
+    query: &str,
+    filters: &Filters,
+    include_hidden: bool,
+) -> Result<Vec<crate::store::sessions::SessionRecord>> {
+    let q = query.trim();
+    let fts = if q.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        fts_scores(store, q)?
+    };
+    let mut by_key = std::collections::HashMap::new();
+    let mut sessions = Vec::new();
+    for record in store.list_records(include_hidden)? {
+        sessions.push(record.session.clone());
+        by_key.insert(record.session.key(), record);
+    }
+    let mut out: Vec<_> = rank(&sessions, q, filters, &fts, usize::MAX)
+        .into_iter()
+        .filter_map(|r| by_key.remove(&r.session.key()))
+        .collect();
+    out.sort_by_key(|r| !r.pinned);
+    Ok(out)
+}
+
 pub fn rank(
     sessions: &[Session],
     query: &str,

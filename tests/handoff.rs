@@ -4,15 +4,15 @@ use std::process::Command;
 
 #[test]
 fn resume_handoff_chdirs_and_execs() {
-    let bin = aiz_bin();
+    let bin = hopback_bin();
     let dir = tempfile::tempdir().unwrap();
 
     let canon = std::fs::canonicalize(dir.path()).unwrap();
 
     let out = Command::new(bin)
-        .env("AIZ_EXEC_TEST", canon.to_str().unwrap())
+        .env("HOPBACK_EXEC_TEST", canon.to_str().unwrap())
         .output()
-        .expect("spawn aiz");
+        .expect("spawn hopback");
 
     assert!(out.status.success(), "handoff process should exit cleanly");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -25,13 +25,13 @@ fn resume_handoff_chdirs_and_execs() {
     );
 
     assert!(
-        !stdout.contains("aiz"),
-        "aiz banner must not appear; the process should have been replaced"
+        !stdout.contains("hopback"),
+        "hopback banner must not appear; the process should have been replaced"
     );
 }
 
-fn aiz_bin() -> std::path::PathBuf {
-    let cargo_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_aiz"));
+fn hopback_bin() -> std::path::PathBuf {
+    let cargo_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hopback"));
     if cargo_bin.components().count() > 1 {
         return cargo_bin;
     }
@@ -41,6 +41,6 @@ fn aiz_bin() -> std::path::PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.push("aiz");
+    path.push("hopback");
     path
 }

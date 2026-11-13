@@ -1,3 +1,7 @@
+// A title comes from the first of these that has one: the rename sidecar,
+// `custom-title` records, the sessions index, `ai-title` records, the first
+// prompt.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -74,11 +78,53 @@ fn part_text(part: &Value) -> Option<&str> {
     None
 }
 
+/// Where `/rename` keeps a session's current name: a small JSON file in a
+/// folder named after the session, next to its transcript.
+fn sidecar_title_path(session_file: &Path) -> Option<PathBuf> {
+    let id = session_file.file_stem()?;
+    Some(session_file.parent()?.join(id).join("custom-title.json"))
+}
+
+fn sidecar_title(session_file: &Path) -> String {
+    let Some(path) = sidecar_title_path(session_file) else {
+        return String::new();
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return String::new();
+    };
+    serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("customTitle")
+                .and_then(|t| t.as_str())
+                .map(|t| t.trim().to_string())
+        })
+        .unwrap_or_default()
+}
+
 pub fn parse_jsonl(bytes: &[u8], id: &str, mtime_ns: i64, index_title: &str) -> Option<Session> {
+    parse_jsonl_with_titles(bytes, id, mtime_ns, "", index_title)
+}
+
+/// Parses a transcript. The title is the first of: `sidecar_title` (the
+/// current `/rename` value), the last `custom-title` record in the transcript,
+/// `index_title` (from `sessions-index.json`), the last `ai-title` record, and
+/// the first prompt.
+pub fn parse_jsonl_with_titles(
+    bytes: &[u8],
+    id: &str,
+    mtime_ns: i64,
+    sidecar_title: &str,
+    index_title: &str,
+) -> Option<Session> {
+    let mut custom_title = String::new();
+    let mut ai_title = String::new();
     let mut first_user_message = String::new();
     let mut directory = String::new();
     let mut messages: Vec<String> = Vec::new();
     let mut turn_count: u32 = 0;
+    // The mode Claude Code last recorded, on prompts and on mode changes.
+    let mut permission_mode = String::new();
 
     let mut conversation_secs: Option<i64> = None;
 
@@ -91,6 +137,28 @@ pub fn parse_jsonl(bytes: &[u8], id: &str, mtime_ns: i64, index_title: &str) -> 
             continue;
         };
         let msg_type = data.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if let Some(mode) = data.get("permissionMode").and_then(|m| m.as_str()) {
+            permission_mode = mode.to_string();
+        }
+
+        if msg_type == "custom-title" || msg_type == "ai-title" {
+            let key = if msg_type == "custom-title" {
+                "customTitle"
+            } else {
+                "aiTitle"
+            };
+            if let Some(t) = data.get(key).and_then(|t| t.as_str()) {
+                if !t.trim().is_empty() {
+                    let slot = if msg_type == "custom-title" {
+                        &mut custom_title
+                    } else {
+                        &mut ai_title
+                    };
+                    *slot = t.trim().to_string();
+                }
+            }
+            continue;
+        }
 
         if msg_type == "user" && directory.is_empty() {
             if let Some(cwd) = data.get("cwd").and_then(|c| c.as_str()) {
@@ -176,11 +244,15 @@ pub fn parse_jsonl(bytes: &[u8], id: &str, mtime_ns: i64, index_title: &str) -> 
         return None;
     }
 
-    let title_source = if !index_title.trim().is_empty() {
-        index_title
-    } else {
-        &first_user_message
-    };
+    let title_source = [
+        sidecar_title,
+        custom_title.as_str(),
+        index_title,
+        ai_title.as_str(),
+    ]
+    .into_iter()
+    .find(|t| !t.trim().is_empty())
+    .unwrap_or(&first_user_message);
 
     Some(Session {
         id: id.to_string(),
@@ -191,7 +263,7 @@ pub fn parse_jsonl(bytes: &[u8], id: &str, mtime_ns: i64, index_title: &str) -> 
         content: join_content(&messages),
         message_count: turn_count,
         mtime: mtime_ns,
-        yolo: false,
+        yolo: permission_mode == "bypassPermissions",
         source_path: None,
     })
 }
@@ -202,6 +274,10 @@ impl Adapter for ClaudeAdapter {
     }
 
     fn supports_yolo(&self) -> bool {
+        true
+    }
+
+    fn detects_yolo(&self) -> bool {
         true
     }
 
@@ -235,9 +311,15 @@ impl Adapter for ClaudeAdapter {
                 if !name.ends_with(".jsonl") || name.starts_with("agent-") {
                     continue;
                 }
-                let Ok(mtime) = mtime_nanos(&path) else {
+                let Ok(mut mtime) = mtime_nanos(&path) else {
                     continue;
                 };
+                // A rename only rewrites the sidecar, so let it count as a
+                // change to the session.
+                if let Some(renamed) = sidecar_title_path(&path).and_then(|p| mtime_nanos(&p).ok())
+                {
+                    mtime = mtime.max(renamed);
+                }
                 let id = path
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -266,7 +348,8 @@ impl Adapter for ClaudeAdapter {
             .parent()
             .map(|p| self.index_title(p, &id))
             .unwrap_or_default();
-        let mut session = parse_jsonl(&bytes, &id, mtime, &index_title);
+        let mut session =
+            parse_jsonl_with_titles(&bytes, &id, mtime, &sidecar_title(path), &index_title);
         if let Some(s) = &mut session {
             s.source_path = Some(path.to_string_lossy().to_string());
         }

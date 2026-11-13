@@ -1,12 +1,17 @@
 pub mod adapters;
+pub mod agent;
+pub mod app;
 pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod index;
 pub mod launcher;
 pub mod model;
+pub mod output;
 pub mod query;
+pub mod quick;
 pub mod search;
 pub mod stats;
 pub mod store;
+pub mod title;
 pub mod tui;

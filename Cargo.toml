@@ -1,19 +1,38 @@
 [package]
-name = "aiz"
-version = "0.1.0"
+name = "hopback"
+version = "0.2.0"
 edition = "2021"
-description = "A fast, local-first CLI/TUI for finding, resuming, and natively forking AI coding sessions across Claude, Codex, and other agents."
+default-run = "hopback"
+description = "Find, resume and fork coding-agent sessions across Claude Code, Codex and more"
 license = "MIT"
-repository = "https://github.com/augustlakia/aiz"
+repository = "https://github.com/avgvi/hopback"
+homepage = "https://github.com/avgvi/hopback"
 readme = "README.md"
+keywords = ["cli", "tui", "claude-code", "codex", "coding-agents"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/src/**",
+    "/tests/**",
+    "/skills/**",
+    "/man/**",
+]
 
 [lib]
-name = "aiz"
+name = "hopback"
 path = "src/lib.rs"
 
 [[bin]]
-name = "aiz"
+name = "hopback"
 path = "src/main.rs"
+
+[[bin]]
+name = "hb"
+path = "src/bin/hb.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -23,6 +42,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 nucleo-matcher = "0.3"
 ratatui = "0.29"
+clap_complete = "4"
+clap_mangen = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -30,3 +54,8 @@ tempfile = "3"
 [profile.release]
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

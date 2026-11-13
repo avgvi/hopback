@@ -7,6 +7,7 @@ use crate::config::SCHEMA_VERSION;
 
 pub mod dirs;
 pub mod forks;
+pub mod legacy;
 pub mod overrides;
 pub mod sessions;
 pub mod settings;
@@ -325,7 +326,7 @@ mod tests {
     #[test]
     fn open_creates_file_and_enables_wal() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("nested").join("aiz.db");
+        let path = dir.path().join("nested").join("hopback.db");
         let s = Store::open(&path).unwrap();
         assert!(path.exists());
         let mode: String = s
@@ -338,7 +339,7 @@ mod tests {
     #[test]
     fn bumping_user_version_migrates_not_drops() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("aiz.db");
+        let path = dir.path().join("hopback.db");
 
         {
             let conn = Connection::open(&path).unwrap();
@@ -399,7 +400,7 @@ mod tests {
     #[test]
     fn v8_migration_adds_hidden_and_keeps_prior_overrides() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("aiz.db");
+        let path = dir.path().join("hopback.db");
 
         {
             let conn = Connection::open(&path).unwrap();
@@ -474,7 +475,7 @@ mod tests {
     #[test]
     fn concurrent_reader_and_writer_under_wal() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("aiz.db");
+        let path = dir.path().join("hopback.db");
         let writer = Store::open(&path).unwrap();
 
         let reader = Store::open(&path).unwrap();

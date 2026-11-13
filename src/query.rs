@@ -27,18 +27,125 @@ impl Keyword {
     }
 }
 
+impl Keyword {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Keyword::Agent => "agent",
+            Keyword::Dir => "dir",
+            Keyword::Date => "date",
+        }
+    }
+}
+
 enum Token<'a> {
     Keyword(bool, Keyword, &'a str),
 
     Text(&'a str),
 }
 
+/// A token and where it sits in the raw query, as byte offsets.
+struct Placed<'a> {
+    start: usize,
+    end: usize,
+    token: Token<'a>,
+}
+
+/// A `keyword:value` token of the raw query, as byte offsets. `value_start`
+/// is the first byte after the colon; a quoted value includes its quotes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeywordSpan {
+    pub start: usize,
+    pub value_start: usize,
+    pub end: usize,
+    pub negated: bool,
+    pub keyword: Keyword,
+}
+
+/// Every `agent:`, `dir:` and `date:` token of `raw`, in order.
+pub fn keyword_spans(raw: &str) -> Vec<KeywordSpan> {
+    tokenize(raw)
+        .into_iter()
+        .filter_map(|placed| match placed.token {
+            Token::Keyword(negated, keyword, _) => Some(KeywordSpan {
+                start: placed.start,
+                value_start: placed.start + usize::from(negated) + keyword.name().len() + 1,
+                end: placed.end,
+                negated,
+                keyword,
+            }),
+            Token::Text(_) => None,
+        })
+        .collect()
+}
+
+/// Whether a filter value means something: every agent is known, a date is
+/// one hopback understands. A folder filter takes any text.
+pub fn is_valid_value(keyword: Keyword, value: &str) -> bool {
+    let value = value.trim_matches('"');
+    match keyword {
+        Keyword::Dir => true,
+        Keyword::Agent => {
+            let mut parts = value.split(',').map(|part| part.trim()).peekable();
+            parts.peek().is_some()
+                && parts.all(|part| {
+                    let name = part.strip_prefix('!').unwrap_or(part);
+                    !name.is_empty() && AgentId::resolve(name).is_some()
+                })
+        }
+        Keyword::Date => {
+            let value = value
+                .strip_prefix('!')
+                .unwrap_or(value)
+                .to_ascii_lowercase();
+            matches!(value.as_str(), "today" | "yesterday" | "week" | "month")
+                || parse_relative(&value).is_some()
+        }
+    }
+}
+
+/// `raw` with every `agent:` token removed and, for `Some(name)`, one
+/// `agent:<name>` added at the end. This is what the agent tabs write.
+pub fn set_agent(raw: &str, agent: Option<&str>) -> String {
+    let mut parts: Vec<String> = tokenize(raw)
+        .into_iter()
+        .filter(|placed| !matches!(placed.token, Token::Keyword(_, Keyword::Agent, _)))
+        .map(|placed| raw[placed.start..placed.end].to_string())
+        .collect();
+    if let Some(agent) = agent {
+        parts.push(format!("agent:{agent}"));
+    }
+    parts.join(" ")
+}
+
+/// Date values offered while typing `date:`.
+const DATE_WORDS: [&str; 4] = ["today", "yesterday", "week", "month"];
+
+/// What to append to `raw` to finish the agent or date value being typed at
+/// its end: "aude" for `agent:cl`. `agents` are the names to offer, best
+/// first. `None` when nothing is being typed or nothing matches.
+pub fn completion(raw: &str, agents: &[&str]) -> Option<String> {
+    let (keyword, partial) = keyword_token_at_end(raw)?;
+    if partial.is_empty() {
+        return None;
+    }
+    let partial = partial.to_ascii_lowercase();
+    let candidates: &[&str] = match keyword {
+        Keyword::Agent => agents,
+        Keyword::Date => &DATE_WORDS,
+        Keyword::Dir => return None,
+    };
+    candidates
+        .iter()
+        .find(|candidate| candidate.starts_with(&partial) && **candidate != partial)
+        .map(|candidate| candidate[partial.len()..].to_string())
+}
+
 pub fn parse_query(raw: &str, now_secs: i64) -> ParsedQuery {
     let mut filters = Filters::default();
     let mut text_words: Vec<&str> = Vec::new();
 
-    for tok in tokenize(raw) {
-        match tok {
+    for placed in tokenize(raw) {
+        match placed.token {
             Token::Text(w) => text_words.push(w),
             Token::Keyword(negated, kw, value) => match kw {
                 Keyword::Agent => {
@@ -73,7 +180,7 @@ pub fn parse_query(raw: &str, now_secs: i64) -> ParsedQuery {
     }
 }
 
-fn tokenize(raw: &str) -> Vec<Token<'_>> {
+fn tokenize(raw: &str) -> Vec<Placed<'_>> {
     let bytes = raw.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -102,8 +209,12 @@ fn tokenize(raw: &str) -> Vec<Token<'_>> {
                         k += 1;
                     }
                     let value = &raw[inner..k];
-                    out.push(Token::Keyword(neg, kw, value));
                     i = if k < n { k + 1 } else { k };
+                    out.push(Placed {
+                        start,
+                        end: i,
+                        token: Token::Keyword(neg, kw, value),
+                    });
                     continue;
                 } else {
                     let mut k = vstart;
@@ -111,7 +222,11 @@ fn tokenize(raw: &str) -> Vec<Token<'_>> {
                         k += 1;
                     }
                     let value = &raw[vstart..k];
-                    out.push(Token::Keyword(neg, kw, value));
+                    out.push(Placed {
+                        start,
+                        end: k,
+                        token: Token::Keyword(neg, kw, value),
+                    });
                     i = k;
                     continue;
                 }
@@ -122,7 +237,11 @@ fn tokenize(raw: &str) -> Vec<Token<'_>> {
         while k < n && !bytes[k].is_ascii_whitespace() {
             k += 1;
         }
-        out.push(Token::Text(&raw[start..k]));
+        out.push(Placed {
+            start,
+            end: k,
+            token: Token::Text(&raw[start..k]),
+        });
         i = k;
     }
 
@@ -569,5 +688,71 @@ mod tests {
 
         assert_eq!(keyword_token_at_end("just text"), None);
         assert_eq!(keyword_token_at_end("error:foo"), None);
+    }
+
+    #[test]
+    fn keyword_spans_give_byte_ranges() {
+        let raw = "api -agent:claude dir:\"my project\" date:week";
+        let spans = keyword_spans(raw);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(&raw[spans[0].start..spans[0].end], "-agent:claude");
+        assert!(spans[0].negated);
+        assert_eq!(&raw[spans[0].value_start..spans[0].end], "claude");
+        assert_eq!(&raw[spans[1].start..spans[1].end], "dir:\"my project\"");
+        assert_eq!(spans[1].keyword, Keyword::Dir);
+        assert_eq!(&raw[spans[2].value_start..spans[2].end], "week");
+        assert!(keyword_spans("error: failed, see notes:today").is_empty());
+    }
+
+    #[test]
+    fn values_are_checked_per_keyword() {
+        assert!(is_valid_value(Keyword::Agent, "claude"));
+        assert!(is_valid_value(Keyword::Agent, "claude,!codex"));
+        assert!(is_valid_value(Keyword::Agent, "agy"));
+        assert!(!is_valid_value(Keyword::Agent, "nope"));
+        assert!(!is_valid_value(Keyword::Agent, "claude,nope"));
+        assert!(!is_valid_value(Keyword::Agent, ""));
+        assert!(is_valid_value(Keyword::Date, "today"));
+        assert!(is_valid_value(Keyword::Date, "<3d"));
+        assert!(is_valid_value(Keyword::Date, "!week"));
+        assert!(!is_valid_value(Keyword::Date, "someday"));
+        assert!(is_valid_value(Keyword::Dir, "anything at all"));
+    }
+
+    #[test]
+    fn set_agent_replaces_the_agent_filter_and_keeps_the_rest() {
+        assert_eq!(set_agent("", Some("claude")), "agent:claude");
+        assert_eq!(set_agent("agent:claude", Some("codex")), "agent:codex");
+        assert_eq!(set_agent("agent:claude", None), "");
+        assert_eq!(
+            set_agent("auth agent:claude bug", Some("codex")),
+            "auth bug agent:codex"
+        );
+        assert_eq!(set_agent("auth -agent:claude,codex", None), "auth");
+        assert_eq!(
+            set_agent("dir:\"my project\" agent:!codex date:week", Some("agy")),
+            "dir:\"my project\" date:week agent:agy"
+        );
+    }
+
+    #[test]
+    fn completion_finishes_agent_and_date_values() {
+        let agents = ["claude", "codex", "agy"];
+        assert_eq!(completion("agent:cl", &agents).as_deref(), Some("aude"));
+        assert_eq!(completion("agent:co", &agents).as_deref(), Some("dex"));
+        assert_eq!(completion("auth agent:!a", &agents).as_deref(), Some("gy"));
+        assert_eq!(
+            completion("agent:claude,co", &agents).as_deref(),
+            Some("dex")
+        );
+        assert_eq!(completion("date:ye", &agents).as_deref(), Some("sterday"));
+        assert_eq!(completion("-date:to", &agents).as_deref(), Some("day"));
+        // Nothing to add: complete already, no value yet, unknown, or not a keyword.
+        assert_eq!(completion("agent:claude", &agents), None);
+        assert_eq!(completion("agent:", &agents), None);
+        assert_eq!(completion("agent:zz", &agents), None);
+        assert_eq!(completion("dir:pro", &agents), None);
+        assert_eq!(completion("cl", &agents), None);
+        assert_eq!(completion("agent:cl ", &agents), None);
     }
 }

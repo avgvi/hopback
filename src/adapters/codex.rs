@@ -1,5 +1,10 @@
+// Codex rollout files: the subagent filter, the id-from-filename rule, the
+// response_item prompt fallback and the session_index handling.
+
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -10,9 +15,14 @@ use crate::model::{join_content, truncate_title, Session, ASSISTANT_PREFIX, USER
 
 const TITLE_MAX: usize = 80;
 
+/// One `session_index.jsonl` entry: the thread name Codex shows and when it
+/// was last renamed (nanoseconds, 0 when unknown).
+type ThreadIndex = HashMap<String, (String, i64)>;
+
 pub struct CodexAdapter {
     sessions_dir: PathBuf,
     session_index_file: PathBuf,
+    thread_index: OnceLock<ThreadIndex>,
 }
 
 impl CodexAdapter {
@@ -22,44 +32,62 @@ impl CodexAdapter {
             .parent()
             .map(|p| p.join("session_index.jsonl"))
             .unwrap_or_else(|| PathBuf::from("session_index.jsonl"));
-        CodexAdapter {
-            sessions_dir: dir,
-            session_index_file: index,
-        }
+        CodexAdapter::with_paths(dir, index)
     }
 
     pub fn with_paths(sessions_dir: PathBuf, session_index_file: PathBuf) -> CodexAdapter {
         CodexAdapter {
             sessions_dir,
             session_index_file,
+            thread_index: OnceLock::new(),
         }
     }
 
-    fn thread_name(&self, session_id: &str) -> String {
-        let Ok(bytes) = std::fs::read(&self.session_index_file) else {
-            return String::new();
-        };
-        for line in bytes.split(|&b| b == b'\n') {
-            if line.iter().all(|b| b.is_ascii_whitespace()) {
-                continue;
-            }
-            let Ok(data) = serde_json::from_slice::<Value>(line) else {
-                continue;
-            };
-            let id = data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            if id != session_id {
-                continue;
-            }
-            let name = data
-                .get("thread_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !name.trim().is_empty() {
-                return name.trim().to_string();
-            }
-        }
-        String::new()
+    /// Thread names from `session_index.jsonl`, read once per adapter. Codex
+    /// appends a line on every rename, so the last entry for an id wins.
+    fn thread_index(&self) -> &ThreadIndex {
+        self.thread_index
+            .get_or_init(|| load_thread_index(&self.session_index_file))
     }
+
+    fn thread_name(&self, session_id: &str) -> String {
+        self.thread_index()
+            .get(session_id)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default()
+    }
+}
+
+fn load_thread_index(path: &Path) -> ThreadIndex {
+    let mut out = ThreadIndex::new();
+    let Ok(bytes) = std::fs::read(path) else {
+        return out;
+    };
+    for line in bytes.split(|&b| b == b'\n') {
+        if line.iter().all(|b| b.is_ascii_whitespace()) {
+            continue;
+        }
+        let Ok(data) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        let id = data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let name = data
+            .get("thread_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if id.is_empty() || name.is_empty() {
+            continue;
+        }
+        let renamed = data
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .and_then(parse_iso8601_secs)
+            .map(|secs| secs.saturating_mul(1_000_000_000))
+            .unwrap_or(0);
+        out.insert(id.to_string(), (name.to_string(), renamed));
+    }
+    out
 }
 
 impl Default for CodexAdapter {
@@ -94,6 +122,49 @@ fn id_from_stem(stem: &str) -> String {
     }
 }
 
+/// Current rollouts are named `rollout-<local time>-<uuid>.jsonl`; the uuid is
+/// the id `codex resume` takes.
+fn uuid_from_stem(stem: &str) -> Option<&str> {
+    let start = stem.len().checked_sub(36)?;
+    let candidate = stem.get(start..)?;
+    let ok = candidate.char_indices().all(|(i, c)| match i {
+        8 | 13 | 18 | 23 => c == '-',
+        _ => c.is_ascii_hexdigit(),
+    });
+    ok.then_some(candidate)
+}
+
+/// Payload of the rollout's own `session_meta`, which is its first record.
+/// Only the head of the file is read. Later `session_meta` records can be
+/// copies from a fork's history and must not be used.
+fn first_session_meta(path: &Path) -> Option<Value> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    for _ in 0..8 {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).ok()? == 0 {
+            return None;
+        }
+        if line.iter().all(|b| b.is_ascii_whitespace()) {
+            continue;
+        }
+        let Ok(mut data) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if data.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
+            return data.get_mut("payload").map(Value::take);
+        }
+    }
+    None
+}
+
+/// Reviews, guardian checks and spawned threads. `codex resume` does not list
+/// them, and they are noise next to the session that started them.
+fn is_subagent_meta(meta: &Value) -> bool {
+    meta.pointer("/source/subagent").is_some()
+}
+
 pub fn parse_jsonl(
     bytes: &[u8],
     fallback_id: &str,
@@ -104,6 +175,9 @@ pub fn parse_jsonl(
     let mut directory = String::new();
     let mut messages: Vec<String> = Vec::new();
     let mut user_prompts: Vec<String> = Vec::new();
+    let mut response_user_prompts: Vec<String> = Vec::new();
+    let mut item_prompts: Vec<String> = Vec::new();
+    let mut seen_meta = false;
     let mut turn_count: u32 = 0;
     let mut yolo = false;
 
@@ -122,6 +196,13 @@ pub fn parse_jsonl(
         match msg_type {
             "session_meta" => {
                 if let Some(p) = payload {
+                    if seen_meta {
+                        continue;
+                    }
+                    seen_meta = true;
+                    if is_subagent_meta(p) {
+                        return None;
+                    }
                     if let Some(id) = p.get("id").and_then(|v| v.as_str()) {
                         session_id = id.to_string();
                     }
@@ -174,9 +255,17 @@ pub fn parse_jsonl(
                                     .filter(|s| !s.is_empty())
                                     .or_else(|| part.get("input_text").and_then(|v| v.as_str()))
                                     .unwrap_or("");
-                                if !text.is_empty()
-                                    && !text.trim_start().starts_with("<environment_context>")
-                                {
+                                if !text.is_empty() && !is_injected_part(text) {
+                                    // Current Codex records the prompt only as a
+                                    // `message` response item; older builds also
+                                    // wrote an `event_msg`/`user_message`.
+                                    let is_message = p
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .is_none_or(|t| t == "message");
+                                    if role == "user" && is_message {
+                                        response_user_prompts.push(text.to_string());
+                                    }
                                     messages.push(format!("{prefix}{text}"));
                                     has_text = true;
                                 }
@@ -200,6 +289,31 @@ pub fn parse_jsonl(
                                 }
                             }
                         }
+                        // The prompt as the user saw it, without the context
+                        // and image labels that the model input carries.
+                        "item_completed" => {
+                            let item = p.get("item");
+                            let is_user = item.and_then(|i| i.get("type")).and_then(|v| v.as_str())
+                                == Some("UserMessage");
+                            if is_user {
+                                let text = item
+                                    .and_then(|i| i.get("content"))
+                                    .and_then(|c| c.as_array())
+                                    .map(|parts| {
+                                        parts
+                                            .iter()
+                                            .filter_map(|part| {
+                                                part.get("text").and_then(|v| v.as_str())
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    })
+                                    .unwrap_or_default();
+                                if !text.trim().is_empty() {
+                                    item_prompts.push(text);
+                                }
+                            }
+                        }
                         "agent_reasoning" => {
                             if let Some(text) = p.get("text").and_then(|v| v.as_str()) {
                                 if !text.is_empty() {
@@ -220,11 +334,16 @@ pub fn parse_jsonl(
     }
 
     if user_prompts.is_empty() {
+        user_prompts = response_user_prompts;
+    }
+    if user_prompts.is_empty() {
         return None;
     }
 
     let title_source = if !thread_name.trim().is_empty() {
         thread_name
+    } else if let Some(prompt) = item_prompts.first() {
+        prompt
     } else {
         &user_prompts[0]
     };
@@ -243,29 +362,25 @@ pub fn parse_jsonl(
     })
 }
 
-fn session_id_for_file(path: &Path) -> String {
-    if let Ok(bytes) = std::fs::read(path) {
-        for line in bytes.split(|&b| b == b'\n') {
-            if line.iter().all(|b| b.is_ascii_whitespace()) {
-                continue;
-            }
-            if let Ok(data) = serde_json::from_slice::<Value>(line) {
-                if data.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
-                    if let Some(id) = data
-                        .get("payload")
-                        .and_then(|p| p.get("id"))
-                        .and_then(|v| v.as_str())
-                    {
-                        if !id.is_empty() {
-                            return id.to_string();
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-    }
+/// Text parts that Codex adds to the model input around the user's prompt:
+/// the environment block and the labels that bracket each attached image.
+fn is_injected_part(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("<environment_context>") || t.starts_with("<image") || t.starts_with("</image>")
+}
+
+fn session_id_for_file(path: &Path, meta: Option<&Value>) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if let Some(uuid) = uuid_from_stem(stem) {
+        return uuid.to_string();
+    }
+    if let Some(id) = meta
+        .and_then(|m| m.get("id"))
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty())
+    {
+        return id.to_string();
+    }
     id_from_stem(stem)
 }
 
@@ -295,13 +410,23 @@ impl Adapter for CodexAdapter {
         collect_jsonl(&self.sessions_dir, &mut files);
         let mut out = HashMap::new();
         for path in files {
-            let Ok(mtime) = mtime_nanos(&path) else {
+            let Ok(mut mtime) = mtime_nanos(&path) else {
                 continue;
             };
-            let id = session_id_for_file(&path);
-            if !id.is_empty() {
-                out.insert(id, (path, mtime));
+            let meta = first_session_meta(&path);
+            if meta.as_ref().is_some_and(is_subagent_meta) {
+                continue;
             }
+            let id = session_id_for_file(&path, meta.as_ref());
+            if id.is_empty() {
+                continue;
+            }
+            // A rename only touches session_index.jsonl, so let it count as a
+            // change to the session.
+            if let Some((_, renamed)) = self.thread_index().get(&id) {
+                mtime = mtime.max(*renamed);
+            }
+            out.insert(id, (path, mtime));
         }
         Ok(out)
     }
@@ -315,10 +440,12 @@ impl Adapter for CodexAdapter {
         let fallback_id = id_from_stem(stem);
         let mtime = mtime_nanos(path).unwrap_or(0);
 
-        let real_id = session_id_for_file(path);
+        let meta = first_session_meta(path);
+        let real_id = session_id_for_file(path, meta.as_ref());
         let thread = self.thread_name(&real_id);
         let mut session = parse_jsonl(&bytes, &fallback_id, mtime, &thread);
         if let Some(s) = &mut session {
+            s.id = real_id;
             s.source_path = Some(path.to_string_lossy().to_string());
         }
         Ok(session)

@@ -77,16 +77,101 @@ pub fn format_directory(path: &str, home: &str) -> String {
     path.to_string()
 }
 
+/// Keeps the end of `s`, which for a path is the informative part, and marks
+/// the cut with `…`.
 pub fn truncate_left(s: &str, width: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= width {
         return s.to_string();
     }
-    if width <= 3 {
+    if width <= 1 {
         return chars[chars.len() - width..].iter().collect();
     }
-    let tail: String = chars[chars.len() - (width - 3)..].iter().collect();
-    format!("...{tail}")
+    let tail: String = chars[chars.len() - (width - 1)..].iter().collect();
+    format!("…{tail}")
+}
+
+/// Keeps the start of `s` and marks the cut with `…`.
+pub fn truncate_end(s: &str, width: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let head: String = chars[..width - 1].iter().collect();
+    format!("{}…", head.trim_end())
+}
+
+/// A compact age for a narrow table column: `now`, `5m`, `3h`, `2d`, `6w`,
+/// `4mo`, `2y`.
+pub fn age_short(now_secs: i64, ts_secs: i64) -> String {
+    const MIN: i64 = 60;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    let delta = now_secs - ts_secs;
+    if delta < MIN {
+        "now".to_string()
+    } else if delta < HOUR {
+        format!("{}m", delta / MIN)
+    } else if delta < DAY {
+        format!("{}h", delta / HOUR)
+    } else if delta < 14 * DAY {
+        format!("{}d", delta / DAY)
+    } else if delta < 60 * DAY {
+        format!("{}w", delta / (7 * DAY))
+    } else if delta < 365 * DAY {
+        format!("{}mo", delta / (30 * DAY))
+    } else {
+        format!("{}y", delta / (365 * DAY))
+    }
+}
+
+/// `1123` as `1,123`.
+pub fn group_thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Seconds east of UTC for the local time zone at `ts_secs`, or 0 when it
+/// cannot be found.
+#[cfg(unix)]
+pub fn local_offset_secs(ts_secs: i64) -> i64 {
+    let t: libc::time_t = ts_secs as libc::time_t;
+    // SAFETY: `tm` is plain data that `localtime_r` fills in; both pointers
+    // are valid for the duration of the call.
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&t, &mut tm).is_null() {
+            return 0;
+        }
+        tm.tm_gmtoff as i64
+    }
+}
+
+#[cfg(not(unix))]
+pub fn local_offset_secs(_ts_secs: i64) -> i64 {
+    0
+}
+
+/// `2026-11-11 20:00` for a Unix time shifted by `offset_secs`.
+pub fn date_time(ts_secs: i64, offset_secs: i64) -> String {
+    let stamp = crate::output::rfc3339_utc(ts_secs + offset_secs);
+    // `YYYY-MM-DDTHH:MM:SSZ` -> `YYYY-MM-DD HH:MM`
+    format!("{} {}", &stamp[..10], &stamp[11..16])
+}
+
+/// The session's date and time in the local time zone.
+pub fn local_date_time(ts_secs: i64) -> String {
+    date_time(ts_secs, local_offset_secs(ts_secs))
 }
 
 #[cfg(test)]
@@ -128,8 +213,8 @@ mod tests {
     #[test]
     fn format_directory_collapses_home() {
         assert_eq!(
-            format_directory("/Users/x/code/aiz", "/Users/x"),
-            "~/code/aiz"
+            format_directory("/Users/x/code/hopback", "/Users/x"),
+            "~/code/hopback"
         );
         assert_eq!(format_directory("/var/log", "/Users/x"), "/var/log");
         assert_eq!(format_directory("", "/Users/x"), "n/a");
@@ -146,10 +231,10 @@ mod tests {
 
     #[test]
     fn truncate_left_keeps_tail() {
-        assert_eq!(truncate_left("~/code/aiz", 100), "~/code/aiz");
+        assert_eq!(truncate_left("~/code/hopback", 100), "~/code/hopback");
         assert_eq!(
             truncate_left("~/code/very/deep/path/project", 12),
-            "...h/project"
+            "…ath/project"
         );
 
         assert!(
@@ -158,6 +243,49 @@ mod tests {
                 .count()
                 <= 12
         );
+    }
+
+    #[test]
+    fn truncate_end_marks_the_cut() {
+        assert_eq!(truncate_end("short", 10), "short");
+        assert_eq!(truncate_end("a long session title", 10), "a long se…");
+        assert_eq!(truncate_end("word then more", 6), "word…");
+        assert_eq!(truncate_end("abc", 0), "");
+        assert!(truncate_end("ααααααααα", 4).chars().count() <= 4);
+    }
+
+    #[test]
+    fn age_short_buckets() {
+        let now = 1_000_000_000;
+        let day = 86_400;
+        assert_eq!(age_short(now, now), "now");
+        assert_eq!(age_short(now, now + 50), "now");
+        assert_eq!(age_short(now, now - 59), "now");
+        assert_eq!(age_short(now, now - 60), "1m");
+        assert_eq!(age_short(now, now - 3 * 3600), "3h");
+        assert_eq!(age_short(now, now - 2 * day), "2d");
+        assert_eq!(age_short(now, now - 13 * day), "13d");
+        assert_eq!(age_short(now, now - 21 * day), "3w");
+        assert_eq!(age_short(now, now - 90 * day), "3mo");
+        assert_eq!(age_short(now, now - 800 * day), "2y");
+    }
+
+    #[test]
+    fn thousands_are_grouped() {
+        assert_eq!(group_thousands(0), "0");
+        assert_eq!(group_thousands(999), "999");
+        assert_eq!(group_thousands(1_123), "1,123");
+        assert_eq!(group_thousands(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn date_time_applies_the_offset() {
+        assert_eq!(date_time(0, 0), "1970-01-01 00:00");
+        assert_eq!(date_time(1_700_000_000, 0), "2023-11-14 22:13");
+        assert_eq!(date_time(1_700_000_000, 2 * 3600), "2023-11-15 00:13");
+        assert_eq!(date_time(1_700_000_000, -8 * 3600), "2023-11-14 14:13");
+        // Whatever the zone, the local form has the same shape.
+        assert_eq!(local_date_time(1_700_000_000).len(), 16);
     }
 
     #[test]

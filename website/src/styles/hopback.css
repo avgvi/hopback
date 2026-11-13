@@ -1,0 +1,32 @@
+/* hopback's orange as the accent, on the dark ground the TUI screenshots use. */
+:root {
+	--sl-color-accent-low: #3a2a17;
+	--sl-color-accent: #c2701f;
+	--sl-color-accent-high: #f0b877;
+	--sl-color-black: #0d1117;
+	--sl-color-gray-6: #161b22;
+	--sl-color-gray-5: #262c36;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #f6dfc6;
+	--sl-color-accent: #a85a14;
+	--sl-color-accent-high: #6b380b;
+	--sl-color-black: #ffffff;
+	--sl-color-gray-6: #eef1f4;
+	--sl-color-gray-5: #c5ccd6;
+}
+
+/* Headings in the wordmark's face. */
+h1,
+h2,
+h3,
+.hero h1 {
+	font-family: 'Space Grotesk Variable', var(--sl-font);
+	letter-spacing: -0.02em;
+}
+
+/* Screenshots carry their own window frame and shadow. */
+.sl-markdown-content img {
+	border-radius: 0;
+}

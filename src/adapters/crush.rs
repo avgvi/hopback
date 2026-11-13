@@ -232,6 +232,10 @@ impl Adapter for CrushAdapter {
         AgentId::Crush
     }
 
+    fn mtime_is_per_session(&self) -> bool {
+        false
+    }
+
     fn supports_yolo(&self) -> bool {
         true
     }

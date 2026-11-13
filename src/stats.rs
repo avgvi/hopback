@@ -110,7 +110,7 @@ pub fn render(stats: &Stats, now_secs: i64, home: &str) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    let _ = writeln!(out, "aiz — statistics\n");
+    let _ = writeln!(out, "hopback — statistics\n");
     let avg = if stats.total_sessions > 0 {
         stats.total_messages as f64 / stats.total_sessions as f64
     } else {
