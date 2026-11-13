@@ -6,7 +6,6 @@ default-run = "hopback"
 description = "Find, resume and fork coding-agent sessions across Claude Code, Codex and more"
 license = "MIT"
 repository = "https://github.com/avgvi/hopback"
-homepage = "https://github.com/avgvi/hopback"
 readme = "README.md"
 keywords = ["cli", "tui", "claude-code", "codex", "coding-agents"]
 categories = ["command-line-utilities", "development-tools"]

@@ -150,8 +150,7 @@ fn resume_or_print(session: &Session, yolo: bool, print: bool) -> Result<()> {
         println!("{}", shell_join(&argv));
         return Ok(());
     }
-    launcher::resume(session, yolo)?;
-    Ok(())
+    match launcher::resume(session, yolo)? {}
 }
 
 fn flag_seed_filters(args: &Cli) -> Filters {
@@ -470,8 +469,7 @@ fn fork_by_id(session_id: &str, target_agent: Option<&str>, options: ForkCliOpti
     }
 
     record_native_fork_link(&session, None);
-    launcher::fork(&session, None, launch_yolo)?;
-    Ok(())
+    match launcher::fork(&session, None, launch_yolo)? {}
 }
 
 /// `fork --json` for a native fork. The agent creates the new session when
@@ -596,8 +594,7 @@ fn translated_fork_by_session(
         return Ok(());
     }
 
-    launcher::resume(&result.target_session, launch_yolo)?;
-    Ok(())
+    match launcher::resume(&result.target_session, launch_yolo)? {}
 }
 
 fn resolve_session_selector(store: &Store, selector: &str) -> Result<Session> {
@@ -740,8 +737,7 @@ fn run_tui(
         Outcome::Fork { session, yolo } => {
             record_native_fork_link(&session, None);
 
-            launcher::fork(&session, None, yolo)?;
-            Ok(())
+            match launcher::fork(&session, None, yolo)? {}
         }
         Outcome::TranslatedFork {
             session,
@@ -766,8 +762,7 @@ fn run_tui(
                 print_codex_bootstrap_hint(&result);
                 return Ok(());
             }
-            launcher::resume(&result.target_session, yolo)?;
-            Ok(())
+            match launcher::resume(&result.target_session, yolo)? {}
         }
         Outcome::Quit => Ok(()),
     }

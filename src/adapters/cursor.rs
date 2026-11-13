@@ -201,12 +201,13 @@ fn hex_digit(byte: u8) -> Option<u8> {
 /// Bytes of a value made only of hex digit pairs, such as `7b22...` for `{"...`.
 fn decode_hex(bytes: &[u8]) -> Option<Vec<u8>> {
     let digits = bytes.trim_ascii();
-    let pairs = digits.chunks_exact(2);
-    if digits.is_empty() || !pairs.remainder().is_empty() {
+    let (pairs, rest) = digits.as_chunks::<2>();
+    if digits.is_empty() || !rest.is_empty() {
         return None;
     }
     pairs
-        .map(|pair| Some(hex_digit(pair[0])? << 4 | hex_digit(pair[1])?))
+        .iter()
+        .map(|[high, low]| Some(hex_digit(*high)? << 4 | hex_digit(*low)?))
         .collect()
 }
 
