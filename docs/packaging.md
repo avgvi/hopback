@@ -12,7 +12,7 @@ tag is pushed, and every push, tag and publish is the maintainer's decision.
 |---|---|---|---|
 | GitHub Releases | `curl … hopback-installer.sh \| sh` | cargo-dist: archives per target, checksums, shell installer | `dist-workspace.toml`, `.github/workflows/release.yml` |
 | Homebrew | `brew install avgvi/tap/hopback` | cargo-dist writes `hopback.rb` and pushes it to `avgvi/homebrew-tap` | `dist-workspace.toml` (`tap`, `publish-jobs`) |
-| npm | `npm i -g hopback`, `npx hopback` | cargo-dist's npm installer package, which downloads the release binary | `dist-workspace.toml` |
+| npm | `npm i -g hopback-tui`, `npx hopback-tui` | cargo-dist's npm installer package, which downloads the release binary | `dist-workspace.toml` (`npm-package`) |
 | crates.io | `cargo install hopback`, `cargo binstall hopback` | `cargo publish`, run by its own workflow after the release | `Cargo.toml` (`include`, metadata), `.github/workflows/crates.yml` |
 | PyPI | `uv tool install hopback`, `pipx install hopback` | maturin with `bindings = "bin"`: wheels that carry the two binaries, built and uploaded by its own workflow | `pyproject.toml`, `.github/workflows/pypi.yml` |
 | Nix | `nix run github:avgvi/hopback` | the flake | `flake.nix`, `nix/package.nix` |
@@ -68,7 +68,7 @@ It needs two repository secrets, and the tap repository must exist first:
 | Secret | For |
 |---|---|
 | `HOMEBREW_TAP_TOKEN` | A token that can push to `avgvi/homebrew-tap` |
-| `NPM_TOKEN` | An npm token that can publish `hopback` |
+| `NPM_TOKEN` | An npm token that can publish `hopback-tui` |
 
 PyPI has its own workflow, `.github/workflows/pypi.yml`, which runs on the
 same tags. It builds a wheel for each of the four targets and the source
@@ -108,5 +108,11 @@ Each step that leaves this machine needs the maintainer's go-ahead.
 - **mise and GUI apps:** tools installed through mise's npm or Python backends
   are invisible to GUI apps unless mise's shims are on the login PATH. The
   `ubi:` backend, uv and Homebrew do not have that problem.
+- **npm:** the package is `hopback-tui`, because npm refuses `hopback` as too
+  similar to `loopback`. The npm account requires a two-factor code to
+  publish, which a token in CI cannot give, so the `publish-npm` job fails
+  until the package uses npm's trusted publishing. Until then, download the
+  npm package (the `…-npm-package.tar.gz` file) from the GitHub Release and
+  run `npm publish <file> --access public` by hand.
 - **Names:** `hopback` must be reserved on crates.io, npm and PyPI before the
   first release; registries hand names out first come, first served.

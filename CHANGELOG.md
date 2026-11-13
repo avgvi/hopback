@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The npm package is `hopback-tui`. npm refused the name `hopback` as too
+  similar to another package. The commands it installs are still `hopback`
+  and `hb`.
+
 ## [0.2.0] - 2026-11-13
 
 The relaunch of aiz as hopback.
