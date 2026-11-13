@@ -9,6 +9,8 @@ cargo-dist-version = "0.34.0"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "npm", "homebrew"]
+# The name on npm. npm refuses `hopback` as too similar to `loopback`.
+npm-package = "hopback-tui"
 # A GitHub repo to push Homebrew formulas to
 tap = "avgvi/homebrew-tap"
 # Publish jobs to run in CI

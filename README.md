@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://crates.io/crates/hopback"><img alt="crates.io downloads" src="https://img.shields.io/crates/d/hopback"></a>
-  <a href="https://www.npmjs.com/package/hopback"><img alt="npm downloads per week" src="https://img.shields.io/npm/dw/hopback"></a>
+  <a href="https://www.npmjs.com/package/hopback-tui"><img alt="npm downloads per week" src="https://img.shields.io/npm/dw/hopback-tui"></a>
 </p>
 
 <h4><p align="center">
@@ -65,10 +65,10 @@ cargo binstall hopback
 ### npm
 
 ```bash
-npm install -g hopback
+npm install -g hopback-tui
 ```
 
-Or run it once without installing, with `npx hopback`.
+The package is called `hopback-tui` on npm; the commands it installs are still `hopback` and `hb`. To run it once without installing, use `npx hopback-tui`.
 
 ### Python tools
 
