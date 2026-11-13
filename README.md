@@ -68,7 +68,7 @@ cargo binstall hopback
 npm install -g hopback-tui
 ```
 
-The package is called `hopback-tui` on npm; the commands it installs are still `hopback` and `hb`. To run it once without installing, use `npx hopback-tui`.
+The package is called `hopback-tui` on npm; the commands it installs are still `hopback` and `hb`. To run it once without installing, use `npx -p hopback-tui hb`.
 
 ### Python tools
 
