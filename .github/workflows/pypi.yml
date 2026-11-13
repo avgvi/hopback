@@ -1,13 +1,5 @@
 name: PyPI
 
-# Builds the wheels that carry `hopback` and `hb` for every release target,
-# plus the source distribution, and uploads them to PyPI. It runs on the same
-# version tags as the release workflow.
-#
-# The upload uses PyPI trusted publishing: no token is stored. PyPI has to
-# list this repository, this file name (pypi.yml) and the `pypi` environment
-# as a trusted publisher of the `hopback` project.
-
 on:
   push:
     tags:

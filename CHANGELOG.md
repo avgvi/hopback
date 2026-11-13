@@ -9,9 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The npm package is `hopback-tui`. npm refused the name `hopback` as too
-  similar to another package. The commands it installs are still `hopback`
-  and `hb`.
+- The npm package is `hopback-tui`. The commands it installs are still
+  `hopback` and `hb`.
 
 ## [0.2.0] - 2026-11-13
 
@@ -26,12 +25,12 @@ The relaunch of aiz as hopback.
   macOS and Linux on arm64 and x86_64 with checksums, a shell installer, a
   Homebrew formula for `avgvi/homebrew-tap`, an npm installer and the release
   workflow), a `pyproject.toml` for maturin wheels, and a Nix flake. Every
-  channel installs both `hopback` and `hb`. See `docs/packaging.md`.
+  channel installs both `hopback` and `hb`.
 - `--agent-context` prints a bundled Agent Skill (`skills/hopback/SKILL.md`)
   that tells a coding agent how to search, page, resume and fork with `hb`.
 - `hopback completions bash|zsh|fish` (also elvish and powershell) and
   `hopback man`; the generated man page is in `man/hopback.1`.
-- `AGENTS.md` for contributors and `llms.txt`.
+- `llms.txt`.
 - `hopback pin`, `unpin`, `rename`, `hide` and `unhide <selector>`, each with
   `--json` to print the session after the change.
 - `hopback fork --json` prints the new session, its `resume_command` and the

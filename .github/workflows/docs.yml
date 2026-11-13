@@ -1,8 +1,5 @@
 name: Docs
 
-# Builds website/ and publishes it to GitHub Pages. Pages must be enabled once
-# in the repository settings, with "GitHub Actions" as the source.
-
 on:
   push:
     branches: [main]

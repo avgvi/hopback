@@ -16,8 +16,4 @@ Things to know before using it from a program:
 - [JSON output](https://github.com/avgvi/hopback/blob/main/docs/json.md): the versioned schema for `--json`, the session commands and `fork --json`
 - [Agent Skill](https://github.com/avgvi/hopback/blob/main/skills/hopback/SKILL.md): how an agent should search, page, resume and fork with `hb`
 - [Man page](https://github.com/avgvi/hopback/blob/main/man/hopback.1): every flag and subcommand, generated from the CLI definition
-
-## Contributing
-
-- [AGENTS.md](https://github.com/avgvi/hopback/blob/main/AGENTS.md): code layout, the checks to run, and the rules for adapters, tests and the JSON contract
 - [Changelog](https://github.com/avgvi/hopback/blob/main/CHANGELOG.md): what changed in each release

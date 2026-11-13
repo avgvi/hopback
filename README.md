@@ -68,7 +68,7 @@ cargo binstall hopback
 npm install -g hopback-tui
 ```
 
-The package is called `hopback-tui` on npm; the commands it installs are still `hopback` and `hb`. To run it once without installing, use `npx hopback-tui`.
+The package is called `hopback-tui` on npm; the commands it installs are still `hopback` and `hb`. To run it once without installing, use `npx -p hopback-tui hb`.
 
 ### Python tools
 
@@ -216,7 +216,7 @@ cd hopback
 cargo install --path .       # installs hopback and hb into ~/.cargo/bin
 ```
 
-[AGENTS.md](AGENTS.md) describes the code layout and the checks to run. [docs/packaging.md](docs/packaging.md) covers how releases are built, and [CHANGELOG.md](CHANGELOG.md) what changed.
+[CHANGELOG.md](CHANGELOG.md) lists what changed in each release.
 
 ## License
 
