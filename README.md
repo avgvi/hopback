@@ -32,29 +32,63 @@
 
 ## Install
 
-Every channel installs two commands that are the same program: `hopback` and the short `hb`.
+Pick one. Each installs two commands that are the same program: `hopback` and the short `hb`.
+
+### Homebrew
+
+macOS and Linux.
 
 ```bash
-# Homebrew (macOS and Linux)
 brew install avgvi/tap/hopback
+```
 
-# Shell installer: prebuilt binary for macOS or Linux, arm64 or x86_64
+### Shell installer
+
+A prebuilt binary for macOS or Linux, arm64 or x86_64.
+
+```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/avgvi/hopback/releases/latest/download/hopback-installer.sh | sh
+```
 
-# Cargo
-cargo install hopback        # builds from source
-cargo binstall hopback       # downloads the release binary
+### Cargo
 
-# npm
-npm install -g hopback       # or run once: npx hopback
+```bash
+cargo install hopback
+```
 
-# Python tools
-uv tool install hopback      # or: pipx install hopback
+That builds from source. To download the release binary instead:
 
-# Nix
-nix run github:avgvi/hopback # or add the flake to your profile
+```bash
+cargo binstall hopback
+```
 
-# mise
+### npm
+
+```bash
+npm install -g hopback
+```
+
+Or run it once without installing, with `npx hopback`.
+
+### Python tools
+
+```bash
+uv tool install hopback
+```
+
+With pipx it is `pipx install hopback`.
+
+### Nix
+
+```bash
+nix run github:avgvi/hopback
+```
+
+Or add the flake to your profile.
+
+### mise
+
+```bash
 mise use -g ubi:avgvi/hopback
 ```
 
@@ -173,13 +207,6 @@ Shell completions and the man page come from the binary:
 hb completions zsh > ~/.zfunc/_hb     # bash, fish, elvish and powershell too
 hopback man > hopback.1
 ```
-
-## Your data
-
-- hopback keeps its index, pins, local titles and hidden flags in one SQLite file, `~/.cache/hopback/hopback.db` (or under `$XDG_CACHE_HOME`).
-- It never edits, moves or deletes an agent's own session files. A translated fork writes a new session for the target agent and leaves the source alone.
-- Nothing is sent anywhere. There is no network code.
-- Coming from aiz: the first run copies your pins, local titles, hidden sessions and permission setting from `~/.cache/aiz`.
 
 ## Build from source
 

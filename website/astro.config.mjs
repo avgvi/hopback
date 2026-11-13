@@ -45,7 +45,6 @@ export default defineConfig({
 					items: [
 						{ label: 'Supported agents', slug: 'reference/agents' },
 						{ label: 'JSON output', slug: 'reference/json' },
-						{ label: 'Your data', slug: 'reference/data' },
 						{ label: 'Changelog', slug: 'reference/changelog' },
 					],
 				},
