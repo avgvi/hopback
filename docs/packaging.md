@@ -13,7 +13,7 @@ tag is pushed, and every push, tag and publish is the maintainer's decision.
 | GitHub Releases | `curl … hopback-installer.sh \| sh` | cargo-dist: archives per target, checksums, shell installer | `dist-workspace.toml`, `.github/workflows/release.yml` |
 | Homebrew | `brew install avgvi/tap/hopback` | cargo-dist writes `hopback.rb` and pushes it to `avgvi/homebrew-tap` | `dist-workspace.toml` (`tap`, `publish-jobs`) |
 | npm | `npm i -g hopback`, `npx hopback` | cargo-dist's npm installer package, which downloads the release binary | `dist-workspace.toml` |
-| crates.io | `cargo install hopback`, `cargo binstall hopback` | `cargo publish`, by hand | `Cargo.toml` (`include`, metadata) |
+| crates.io | `cargo install hopback`, `cargo binstall hopback` | `cargo publish`, run by its own workflow after the release | `Cargo.toml` (`include`, metadata), `.github/workflows/crates.yml` |
 | PyPI | `uv tool install hopback`, `pipx install hopback` | maturin with `bindings = "bin"`: wheels that carry the two binaries, built and uploaded by its own workflow | `pyproject.toml`, `.github/workflows/pypi.yml` |
 | Nix | `nix run github:avgvi/hopback` | the flake | `flake.nix`, `nix/package.nix` |
 | mise | `mise use -g ubi:avgvi/hopback` | nothing extra: it reads the GitHub release archives | none |
@@ -76,8 +76,14 @@ distribution, then uploads them with PyPI trusted publishing, so it needs no
 secret: the `hopback` project on PyPI lists this repository, the file name
 `pypi.yml` and the `pypi` environment as its trusted publisher.
 
-crates.io is not in any workflow. Publish it by hand after the GitHub Release
-exists (`cargo binstall` downloads the release binaries).
+crates.io has its own workflow too, `.github/workflows/crates.yml`. It starts
+when the release workflow has finished successfully, so the GitHub Release
+and its binaries exist before the new version appears on crates.io
+(`cargo binstall` downloads them). It needs one more repository secret:
+
+| Secret | For |
+|---|---|
+| `CARGO_REGISTRY_TOKEN` | A crates.io API token that can publish `hopback` |
 
 ## Cutting a release
 
@@ -88,8 +94,7 @@ Each step that leaves this machine needs the maintainer's go-ahead.
 2. Move the Unreleased entries in `CHANGELOG.md` under the new version.
 3. Run the checks and the local builds above.
 4. Commit, tag `vX.Y.Z`, push the commit and the tag. The workflows do the
-   GitHub Release, Homebrew, npm and PyPI.
-5. `cargo publish`.
+   GitHub Release, Homebrew, npm, PyPI and crates.io.
 
 ## Notes
 
