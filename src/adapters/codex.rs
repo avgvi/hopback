@@ -232,9 +232,11 @@ pub fn parse_jsonl(
                             mode == "danger-full-access" || typ == "danger-full-access"
                         })
                         .unwrap_or(false);
-                    if approval == "never" || danger_sandbox {
-                        yolo = true;
-                    }
+                    // Only what `--dangerously-bypass-approvals-and-sandbox`
+                    // gives: no approvals and no sandbox. `codex exec` runs
+                    // with approvals off inside a sandbox, which is not that.
+                    // The latest turn decides.
+                    yolo = approval == "never" && danger_sandbox;
                 }
             }
             "response_item" => {
@@ -530,20 +532,33 @@ mod tests {
     }
 
     #[test]
-    fn yolo_detected_from_approval_policy_never() {
-        let f = r#"{"type":"session_meta","payload":{"id":"x","cwd":"/w"}}
-{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"workspace-write"}}}
-{"type":"event_msg","payload":{"type":"user_message","message":"go fast"}}
-"#;
-        let s = parse_jsonl(f.as_bytes(), "fb", 0, "").unwrap();
-        assert!(s.yolo);
+    fn approvals_off_inside_a_sandbox_is_not_yolo() {
+        // What `codex exec` records: no approvals, but sandboxed.
+        for sandbox in ["workspace-write", "read-only"] {
+            let f = format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"x\",\"cwd\":\"/w\"}}}}\n{{\"type\":\"turn_context\",\"payload\":{{\"approval_policy\":\"never\",\"sandbox_policy\":{{\"type\":\"{sandbox}\"}}}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"go fast\"}}}}"
+            );
+            let s = parse_jsonl(f.as_bytes(), "fb", 0, "").unwrap();
+            assert!(!s.yolo, "{sandbox} with approvals off is not a bypass");
+        }
     }
 
     #[test]
-    fn yolo_detected_from_danger_full_access_sandbox() {
+    fn the_latest_turn_decides_yolo() {
+        let f = r#"{"type":"session_meta","payload":{"id":"x","cwd":"/w"}}
+{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}
+{"type":"event_msg","payload":{"type":"user_message","message":"go"}}
+{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
+"#;
+        let s = parse_jsonl(f.as_bytes(), "fb", 0, "").unwrap();
+        assert!(!s.yolo);
+    }
+
+    #[test]
+    fn yolo_detected_from_no_approvals_and_no_sandbox() {
         for key in ["mode", "type"] {
             let f = format!(
-                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"x\",\"cwd\":\"/w\"}}}}\n{{\"type\":\"turn_context\",\"payload\":{{\"approval_policy\":\"on-request\",\"sandbox_policy\":{{\"{key}\":\"danger-full-access\"}}}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"go\"}}}}"
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"x\",\"cwd\":\"/w\"}}}}\n{{\"type\":\"turn_context\",\"payload\":{{\"approval_policy\":\"never\",\"sandbox_policy\":{{\"{key}\":\"danger-full-access\"}}}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"go\"}}}}"
             );
             let s = parse_jsonl(f.as_bytes(), "fb", 0, "").unwrap();
             assert!(s.yolo, "yolo should be detected via sandbox_policy.{key}");
